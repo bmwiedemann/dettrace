@@ -143,6 +143,7 @@ void seccomp::loadRules(bool debug, bool convertUids) {
   noIntercept(SYS_sync);
   noIntercept(SYS_umask);
 
+  noIntercept(SYS_inotify_init);
   // Okay to not intercept.
   noIntercept(SYS_getsockname);
   noIntercept(SYS_getsockopt);
