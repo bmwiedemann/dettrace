@@ -143,6 +143,10 @@ void seccomp::loadRules(bool debug, bool convertUids) {
   noIntercept(SYS_sync);
   noIntercept(SYS_umask);
 
+  noIntercept(SYS_inotify_init);
+  //include/systemCallList.hpp:    "inotify_add_watch",
+  //include/systemCallList.hpp:    "inotify_rm_watch",
+  //include/systemCallList.hpp:    "inotify_init1",
   // Okay to not intercept.
   noIntercept(SYS_getsockname);
   noIntercept(SYS_getsockopt);
