@@ -287,6 +287,7 @@ void seccomp::loadRules(bool debug, bool convertUids) {
   // TODO
   intercept(SYS_set_robust_list);
   intercept(SYS_stat);
+  intercept(SYS_statx);
   intercept(SYS_statfs);
   intercept(SYS_sysinfo);
 

@@ -1239,6 +1239,9 @@ bool execution::callPreHook(
   case SYS_stat:
     return statSystemCall::handleDetPre(gs, s, t, sched);
 
+  case SYS_statx:
+    return statSystemCall::handleDetPre(gs, s, t, sched);
+
   case SYS_sysinfo:
     return sysinfoSystemCall::handleDetPre(gs, s, t, sched);
 
