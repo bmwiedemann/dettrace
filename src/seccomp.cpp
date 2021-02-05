@@ -239,6 +239,7 @@ void seccomp::loadRules(bool debug, bool convertUids) {
   noIntercept(SYS_mmap);
 
   intercept(SYS_nanosleep);
+  intercept(SYS_clock_nanosleep);
   intercept(SYS_newfstatat);
   intercept(SYS_lstat);
 
