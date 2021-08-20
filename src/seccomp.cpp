@@ -99,6 +99,7 @@ void seccomp::loadRules(bool debug, bool convertUids) {
   noIntercept(SYS_gettid);
   noIntercept(SYS_getuid);
   noIntercept(SYS_getxattr);
+  noIntercept(SYS_removexattr);
   noIntercept(SYS_madvise);
   noIntercept(SYS_munmap);
 
@@ -213,6 +214,9 @@ void seccomp::loadRules(bool debug, bool convertUids) {
   intercept(SYS_dup2);
 
   intercept(SYS_faccessat, debug);
+#ifdef SYS_faccessat2
+  intercept(SYS_faccessat2, debug);
+#endif
   intercept(SYS_fgetxattr, debug);
   intercept(SYS_flistxattr, debug);
   intercept(SYS_fcntl);
