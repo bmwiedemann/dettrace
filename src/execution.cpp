@@ -11,6 +11,7 @@
 #include "vdso.hpp"
 
 #include <sys/utsname.h>
+#include <linux/sched.h>
 #include <stack>
 #include <tuple>
 
@@ -495,6 +496,13 @@ int execution::runProgram() {
         // if((flags & CLONE_FILES) != 0){
         // runtimeError("We do not support CLONE_FILES\n");
         // }
+        break;
+      }
+      case SYS_clone3: {
+        msg = "clone3";
+        struct clone_args *cl_args = (struct clone_args *)tracer.arg1();
+        unsigned long flags = cl_args->flags;
+        isThread = (flags & CLONE_THREAD) != 0;
         break;
       }
       default:

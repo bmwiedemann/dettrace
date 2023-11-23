@@ -111,6 +111,13 @@ void seccomp::loadRules(bool debug, bool convertUids) {
   noIntercept(SYS_prctl);
   noIntercept(SYS_pread64);
   noIntercept(SYS_pwrite64);
+#ifdef SYS_preadv2
+  noIntercept(SYS_preadv);
+  noIntercept(SYS_preadv2);
+  noIntercept(SYS_pwritev);
+  noIntercept(SYS_pwritev2);
+  noIntercept(SYS_rseq);
+#endif
   noIntercept(SYS_listxattr);
   intercept(SYS_rt_sigprocmask);
 
@@ -173,6 +180,7 @@ void seccomp::loadRules(bool debug, bool convertUids) {
   noIntercept(SYS_vfork);
 
   noIntercept(SYS_clone);
+  noIntercept(SYS_clone3);
 
   intercept(SYS_rename, debug);
   intercept(SYS_renameat, debug);
