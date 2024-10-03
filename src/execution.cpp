@@ -498,8 +498,12 @@ int execution::runProgram() {
         // }
         break;
       }
-      case SYS_clone3:
-        return -ENOSYS;
+      case SYS_clone3: {
+        msg = "clone3";
+        unsigned long flags = (unsigned long)tracer.arg1();
+        isThread = (flags & CLONE_THREAD) != 0;
+        break;
+      }
       default:
         runtimeError(
             "Uknown syscall number from fork/clone event: " +
