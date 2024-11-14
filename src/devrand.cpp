@@ -72,6 +72,7 @@ void* RandThread::runThread(void* data_) {
   if (fd == -1) {
     auto err = std::string("open: ") + t->fifo;
     sysError(err.c_str());
+    return NULL;
   }
   pthread_cond_signal(&t->thread_ready);
   pthread_mutex_unlock(&t->thread_mutex);
