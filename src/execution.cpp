@@ -1019,6 +1019,7 @@ bool execution::callPreHook(
     return chdirSystemCall::handleDetPre(gs, s, t, sched);
   case SYS_clone3:
       t.setReturnRegister(-ENOSYS);
+      return -ENOSYS;
       return false;
   case SYS_chmod:
     return chmodSystemCall::handleDetPre(gs, s, t, sched);
@@ -1387,6 +1388,9 @@ void execution::callPostHook(
 
     // case SYS_clone:
     //   return cloneSystemCall::handleDetPost(gs, s, t, sched);
+  case SYS_clone3:
+    t.setReturnRegister(-ENOSYS);
+    return;
 
   case SYS_connect:
     return connectSystemCall::handleDetPost(gs, s, t, sched);
