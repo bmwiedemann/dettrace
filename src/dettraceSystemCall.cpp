@@ -1392,8 +1392,7 @@ void linkatSystemCall::handleDetPost(
 bool openSystemCall::handleDetPre(
     globalState& gs, state& s, ptracer& t, scheduler& sched) {
   if ((char*)t.arg1() != nullptr) {
-    handlePreOpens(gs, s, t, -1, traceePtr<char>{(char*)t.arg1()}, t.arg2());
-    return true;
+    return handlePreOpens(gs, s, t, -1, traceePtr<char>{(char*)t.arg1()}, t.arg2());
   }
   return false;
 }

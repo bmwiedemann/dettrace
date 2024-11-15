@@ -168,7 +168,7 @@ bool tracee_file_exists(
  * s.fileExisted, if O_CREAT was set. This way we know whether a new file was
  * created if the system call suceeds.
  */
-void handlePreOpens(
+bool handlePreOpens(
     globalState& gs,
     state& s,
     ptracer& t,

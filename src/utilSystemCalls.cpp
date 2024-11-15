@@ -483,7 +483,7 @@ string resolve_tracee_path(
   return res;
 }
 // =======================================================================================
-void handlePreOpens(
+bool handlePreOpens(
     globalState& gs,
     state& s,
     ptracer& t,
@@ -577,7 +577,7 @@ Linux acghaswellcat16 4.15.0-43-generic #46-Ubuntu SMP Thu Dec 6 14:45:28 UTC
     // tmp file being created, no way it could already exist. Skip straight to
     // post-hook.
     gs.log.writeToLog(Importance::info, "temporary file being created.\n");
-    return;
+    return true;
   }
 
   if (path == "/dev/random") {
@@ -586,7 +586,7 @@ Linux acghaswellcat16 4.15.0-43-generic #46-Ubuntu SMP Thu Dec 6 14:45:28 UTC
     gs.devUrandomOpens++;
   } else if (path == "/sys/devices/system/cpu/possible") {
     failSystemCall(gs, s, t, ENOENT);
-    return;
+    return false;
   }
 
   // Flag should never be false in pre-hook.
@@ -604,6 +604,7 @@ Linux acghaswellcat16 4.15.0-43-generic #46-Ubuntu SMP Thu Dec 6 14:45:28 UTC
         Importance::info, "fileExisted? %s\n",
         s.fileExisted ? "true" : "false");
   }
+  return true;
 }
 // =======================================================================================
 void handlePostOpens(globalState& gs, state& s, ptracer& t, int flags) {
