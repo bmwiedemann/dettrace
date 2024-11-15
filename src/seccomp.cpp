@@ -277,6 +277,9 @@ void seccomp::loadRules(bool debug, bool convertUids) {
   intercept(SYS_linkat, debug);
 
   noIntercept(SYS_personality);
+  noIntercept(SYS_pidfd_open);
+  noIntercept(SYS_pidfd_getfd);
+  noIntercept(SYS_pidfd_send_signal);
   intercept(SYS_pipe);
   intercept(SYS_pipe2);
   // TODO Not handled.
