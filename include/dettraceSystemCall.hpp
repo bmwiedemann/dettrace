@@ -1003,6 +1003,16 @@ public:
   const int syscallNumber = SYS_poll;
   const string syscallName = "poll";
 };
+class ppollSystemCall {
+public:
+  static bool handleDetPre(
+      globalState& gs, state& s, ptracer& t, scheduler& sched);
+  static void handleDetPost(
+      globalState& gs, state& s, ptracer& t, scheduler& sched);
+
+  const int syscallNumber = SYS_ppoll;
+  const string syscallName = "ppoll";
+};
 // =======================================================================================
 /**
  * int prlimit64(pid_t pid, int resource, const struct rlimit *new_limit,

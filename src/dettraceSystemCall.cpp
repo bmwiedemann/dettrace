@@ -1573,6 +1573,59 @@ void pollSystemCall::handleDetPost(
   return;
 }
 // =======================================================================================
+bool ppollSystemCall::handleDetPre(
+    globalState& gs, state& s, ptracer& t, scheduler& sched) {
+  struct timespec ourTimeout = {0};
+  if (t.arg3() != 0) {
+    s.userDefinedTimeout = true;
+    s.originalArg3 = t.arg3();
+  }
+
+  struct timespec* timeoutPtr = (struct timespec*)t.arg3();
+  s.originalArg3 = (uint64_t)timeoutPtr;
+
+  if (timeoutPtr == nullptr) {
+    // Has to be created in memory.
+    struct timespec* newAddr = (struct timespec*)s.mmapMemory.getAddr().ptr;
+    t.writeToTracee(
+        traceePtr<struct timespec>(newAddr), ourTimeout, s.traceePid);
+
+    t.writeArg3((uint64_t)newAddr);
+  } else {
+    // Already exists in memory.
+    // jld: useless read from tracee memory
+    // timeval timeout = t.readFromTracee(traceePtr<timeval>(timeoutPtr),
+    // t.getPid());
+    t.writeToTracee(
+        traceePtr<struct timespec>(timeoutPtr), ourTimeout, s.traceePid);
+    s.userDefinedTimeout = true;
+  }
+
+  return true;
+}
+
+void ppollSystemCall::handleDetPost(
+    globalState& gs, state& s, ptracer& t, scheduler& sched) {
+  int retval = t.getReturnValue();
+  auto rptr = traceePtr<struct pollfd>((struct pollfd*)t.arg1());
+  int nfds = (int)t.arg2();
+
+  if (retval > 0 || rptr.ptr == NULL || nfds == 0) {
+    s.originalArg3 = 0;
+    s.poll_retry_count = 0;
+    s.poll_retry_maximum = LONG_MAX;
+    return;
+  }
+
+  if (s.poll_retry_count++ < s.poll_retry_maximum) {
+    bool replay = replaySyscallIfBlocked(gs, s, t, sched, 0);
+    if (replay) {
+      t.writeArg3(s.originalArg3);
+    }
+  }
+  return;
+}
+// =======================================================================================
 // for reference, here's the prlimit() prototype
 // int prlimit(pid_t pid, int resource, const struct rlimit *new_limit, struct
 // rlimit *old_limit);

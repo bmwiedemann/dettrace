@@ -1180,6 +1180,9 @@ bool execution::callPreHook(
   case SYS_poll:
     return pollSystemCall::handleDetPre(gs, s, t, sched);
 
+  case SYS_ppoll:
+    return ppollSystemCall::handleDetPre(gs, s, t, sched);
+
   case SYS_prlimit64:
     return prlimit64SystemCall::handleDetPre(gs, s, t, sched);
 
@@ -1526,6 +1529,9 @@ void execution::callPostHook(
 
   case SYS_poll:
     return pollSystemCall::handleDetPost(gs, s, t, sched);
+
+  case SYS_ppoll:
+    return ppollSystemCall::handleDetPost(gs, s, t, sched);
 
   case SYS_prlimit64:
     return prlimit64SystemCall::handleDetPost(gs, s, t, sched);
