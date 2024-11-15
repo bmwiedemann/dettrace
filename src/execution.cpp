@@ -498,12 +498,6 @@ int execution::runProgram() {
         // }
         break;
       }
-      case SYS_clone3: {
-        msg = "clone3";
-        unsigned long flags = (unsigned long)tracer.arg1();
-        isThread = (flags & CLONE_THREAD) != 0;
-        break;
-      }
       default:
         runtimeError(
             "Uknown syscall number from fork/clone event: " +
@@ -1018,8 +1012,10 @@ bool execution::callPreHook(
   case SYS_chdir:
     return chdirSystemCall::handleDetPre(gs, s, t, sched);
   case SYS_clone3:
-      t.setReturnRegister(-ENOSYS);
-      return -ENOSYS;
+      failSystemCall(gs, s, t, ENOSYS);
+      return false;
+  case SYS_close_range:
+      failSystemCall(gs, s, t, ENOSYS);
       return false;
   case SYS_chmod:
     return chmodSystemCall::handleDetPre(gs, s, t, sched);
@@ -1388,12 +1384,6 @@ void execution::callPostHook(
 
   case SYS_close:
     return closeSystemCall::handleDetPost(gs, s, t, sched);
-
-    // case SYS_clone:
-    //   return cloneSystemCall::handleDetPost(gs, s, t, sched);
-  case SYS_clone3:
-    t.setReturnRegister(-ENOSYS);
-    return;
 
   case SYS_connect:
     return connectSystemCall::handleDetPost(gs, s, t, sched);

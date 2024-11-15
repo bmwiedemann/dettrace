@@ -178,8 +178,9 @@ void seccomp::loadRules(bool debug, bool convertUids) {
   // occasionally-missing-ptrace-event-vfork-when-running-ptrace
   noIntercept(SYS_fork);
   noIntercept(SYS_vfork);
-
   noIntercept(SYS_clone);
+  // No support for clone3 handling yet, return -ENOSYS to trigger fallback
+  // to clone.
   intercept(SYS_clone3);
 
   intercept(SYS_rename, debug);
@@ -214,6 +215,7 @@ void seccomp::loadRules(bool debug, bool convertUids) {
   intercept(SYS_creat);
   intercept(SYS_clock_gettime);
   intercept(SYS_close);
+  intercept(SYS_close_range);
   // TODO: This system call
   intercept(SYS_connect);
 
