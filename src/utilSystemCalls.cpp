@@ -584,6 +584,9 @@ Linux acghaswellcat16 4.15.0-43-generic #46-Ubuntu SMP Thu Dec 6 14:45:28 UTC
     gs.devRandomOpens++;
   } else if (path == "/dev/urandom") {
     gs.devUrandomOpens++;
+  } else if (path == "/sys/devices/system/cpu/possible") {
+    failSystemCall(gs, s, t, ENOENT);
+    return;
   }
 
   // Flag should never be false in pre-hook.
