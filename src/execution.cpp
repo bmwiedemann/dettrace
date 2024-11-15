@@ -1014,9 +1014,11 @@ bool execution::callPreHook(
   case SYS_clone3:
       failSystemCall(gs, s, t, ENOSYS);
       return false;
+#ifdef SYS_close_range
   case SYS_close_range:
       failSystemCall(gs, s, t, ENOSYS);
       return false;
+#endif
   case SYS_chmod:
     return chmodSystemCall::handleDetPre(gs, s, t, sched);
 

@@ -215,7 +215,9 @@ void seccomp::loadRules(bool debug, bool convertUids) {
   intercept(SYS_creat);
   intercept(SYS_clock_gettime);
   intercept(SYS_close);
+#ifdef SYS_close_range
   intercept(SYS_close_range);
+#endif
   // TODO: This system call
   intercept(SYS_connect);
 
@@ -278,8 +280,10 @@ void seccomp::loadRules(bool debug, bool convertUids) {
 
   noIntercept(SYS_personality);
   noIntercept(SYS_pidfd_open);
+#ifdef SYS_pidfd_getfd
   noIntercept(SYS_pidfd_getfd);
   noIntercept(SYS_pidfd_send_signal);
+#endif
   intercept(SYS_pipe);
   intercept(SYS_pipe2);
   // TODO Not handled.
