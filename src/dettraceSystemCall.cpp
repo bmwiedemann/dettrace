@@ -1153,6 +1153,18 @@ void ioctlSystemCall::handleDetPost(
   case FICLONE:
 #endif
     return;
+  case 0x125E:
+  case 0x1268:
+  case 0x1277:
+  case 0x1278:
+  case 0x1279:
+  case 0x127B:
+  case 0x127C:
+  case 0x80081272:
+  case 0x80280215:
+  case 0x80041284:
+    // unknown ioctl used by mkfs.ext4
+    return;
   case RTC_RD_TIME: {
     const auto logicalTime = logical_clock::to_time_t(s.getLogicalTime());
     struct tm tm = {};
