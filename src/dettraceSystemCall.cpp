@@ -1154,6 +1154,7 @@ void ioctlSystemCall::handleDetPost(
 #endif
     return;
   case 0x125E:
+  case 0x1261:
   case 0x1268:
   case 0x1277:
   case 0x1278:
@@ -1163,6 +1164,8 @@ void ioctlSystemCall::handleDetPost(
   case 0x80081272:
   case 0x80280215:
   case 0x80041284:
+  case 0xC0045877:
+  case 0xC138FD00:
     // unknown ioctl used by mkfs.ext4
     return;
   case RTC_RD_TIME: {
