@@ -1594,6 +1594,9 @@ void execution::callPostHook(
   case SYS_stat:
     return statSystemCall::handleDetPost(gs, s, t, sched);
 
+  case SYS_statx:
+    return statSystemCall::handleDetPost(gs, s, t, sched);
+
   case SYS_sysinfo:
     return sysinfoSystemCall::handleDetPost(gs, s, t, sched);
 
