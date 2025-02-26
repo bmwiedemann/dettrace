@@ -48,6 +48,11 @@ bool kernelCheck(int a, int b, int c) {
                                                                   : false);
 }
 
+static inline string getSyscallName(int syscallNum)
+{
+  return systemCallMappings[syscallNum];
+}
+
 // =======================================================================================
 execution::execution(
     int debugLevel,
@@ -174,7 +179,7 @@ bool execution::handlePreSystemCall(state& currState, const pid_t traceesPid) {
   }
 
   // Print!
-  string systemCall = systemCallMappings[syscallNum];
+  string systemCall = getSyscallName(syscallNum);
   string redColoredSyscall = log.makeTextColored(Color::red, systemCall);
   log.writeToLog(
       Importance::inter, "[Pid %d] Intercepted %s\n", traceesPid,
@@ -240,7 +245,7 @@ void execution::handlePostSystemCall(state& currState) {
     runtimeError("Unkown system call number: " + to_string(syscallNum));
   }
 
-  string syscallName = systemCallMappings[syscallNum];
+  string syscallName = getSyscallName(syscallNum);
   log.writeToLog(
       Importance::info, "Calling post hook for: " + syscallName + "\n");
 
@@ -823,7 +828,7 @@ bool execution::handleSeccomp(const pid_t traceesPid) {
     syscallNum = tracer.getSystemCallNumber();
     if (0 <= syscallNum && syscallNum < SYSTEM_CALL_COUNT) {
       runtimeError(
-          "No filter rule for system call: " + systemCallMappings[syscallNum]);
+          "No filter rule for system call: " + getSyscallName(syscallNum));
     } else {
       runtimeError(
           "No filter rule for system call with unknown number: " +
