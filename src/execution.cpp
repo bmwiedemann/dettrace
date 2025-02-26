@@ -10,6 +10,7 @@
 #include "util.hpp"
 #include "vdso.hpp"
 
+#include <seccomp.h>
 #include <sys/utsname.h>
 #include <linux/sched.h>
 #include <stack>
@@ -50,7 +51,11 @@ bool kernelCheck(int a, int b, int c) {
 
 static inline string getSyscallName(int syscallNum)
 {
-  return systemCallMappings[syscallNum];
+  static int arch_token = seccomp_arch_native();
+  char *name = seccomp_syscall_resolve_num_arch(arch_token, syscallNum);
+  string syscallName(name);
+  free(name);
+  return syscallName;
 }
 
 // =======================================================================================
