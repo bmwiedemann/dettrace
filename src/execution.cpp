@@ -22,7 +22,9 @@ void deleteMultimapEntry(
     unordered_multimap<pid_t, pid_t>& mymap, pid_t key, pid_t value);
 pid_t eraseChildEntry(multimap<pid_t, pid_t>& map, pid_t process);
 bool kernelCheck(int a, int b, int c);
+#if defined(__x86_64__)
 void trapCPUID(globalState& gs, state& s, ptracer& t);
+#endif
 
 bool kernelCheck(int a, int b, int c) {
   struct utsname utsname = {};
@@ -248,8 +250,11 @@ bool execution::handlePreSystemCall(state& currState, const pid_t traceesPid) {
 void execution::handlePostSystemCall(state& currState) {
   int syscallNum = tracer.getSystemCallNumber();
 
-  // No idea what this system call is! error out.
-  if (syscallNum < 0 || syscallNum > SYSTEM_CALL_COUNT) {
+  // No idea what this system call is! error out. Sentinel numbers are
+  // fine: dettrace itself sets them via changeSystemCall on architectures
+  // lacking the corresponding syscall, see syscallCompat.hpp.
+  if ((syscallNum < 0 && !isSentinelSyscall(syscallNum)) ||
+      syscallNum > SYSTEM_CALL_COUNT) {
     runtimeError("Unkown system call number: " + to_string(syscallNum));
   }
 
@@ -332,6 +337,13 @@ int execution::runProgram() {
         // older kernels).
         systemCallsEvents++;
         tracer.updateState(traceesPid);
+        // Restore this tracee's syscall arguments captured at its entry
+        // stop; the return value may have overwritten the first argument
+        // register and other tracees may have run in between.
+        tracer.restoreSyscallArgs(currentState.syscallArgs);
+#if defined(__s390x__)
+        tracer.setSystemCallNumber(currentState.syscallNumber);
+#endif
         handlePostSystemCall(currentState);
         // set callPostHook to default value for next iteration.
         states.at(traceesPid).callPostHook = false;
@@ -489,6 +501,12 @@ int execution::runProgram() {
     if (ret == ptraceEvent::fork || ret == ptraceEvent::vfork ||
         ret == ptraceEvent::clone) {
       tracer.updateState(traceesPid);
+      // clone/fork/vfork are not seccomp-intercepted, so no entry stop
+      // captured their arguments. The PTRACE_EVENT_CLONE stop fires while
+      // the syscall is still in progress though, before the return value
+      // overwrites the first argument register, so the live registers
+      // still hold the clone flags on every architecture.
+      tracer.captureSyscallArgs();
       int syscallNumber = (int)tracer.getSystemCallNumber();
       string msg = "none";
       bool isThread = false;
@@ -509,6 +527,15 @@ int execution::runProgram() {
         // if((flags & CLONE_FILES) != 0){
         // runtimeError("We do not support CLONE_FILES\n");
         // }
+        break;
+      }
+      case SYS_clone3: {
+        msg = "clone3";
+        // clone3 takes a pointer to a struct clone_args whose first member
+        // is the u64 flags.
+        traceePtr<uint64_t> args((uint64_t*)tracer.arg1());
+        unsigned long flags = tracer.readFromTracee(args, traceesPid);
+        isThread = (flags & CLONE_THREAD) != 0;
         break;
       }
       default:
@@ -717,7 +744,13 @@ void execution::disableVdso(pid_t pid) {
       }
 
       unsigned long off = target + nb;
-      unsigned long val = 0xccccccccccccccccUL;
+#if defined(__x86_64__)
+      unsigned long val = 0xccccccccccccccccUL; /* int3 */
+#elif defined(__s390x__)
+      unsigned long val = 0x0001000100010001UL; /* breakpoint */
+#else
+      unsigned long val = BREAK_INSN | (BREAK_INSN << 32);
+#endif
       while (nb < nbUpper) {
         ptracer::doPtrace(PTRACE_POKETEXT, pid, (void*)off, (void*)val);
         off += sizeof(long);
@@ -729,31 +762,35 @@ void execution::disableVdso(pid_t pid) {
 
   if (vvarMap.procMapBase != 0) {
     struct user_regs_struct regs;
-    ptracer::doPtrace(PTRACE_GETREGS, pid, 0, &regs);
+    ptracer::readRegisters(pid, regs);
     auto oldRegs = regs;
 
-    regs.orig_rax = SYS_mprotect;
+    REG_SYSNUM(regs) = SYS_mprotect;
+#if defined(__x86_64__)
     regs.rax = SYS_mprotect;
-    regs.rdi = vvarMap.procMapBase;
-    regs.rsi = vvarMap.procMapSize;
-    regs.rdx = PROT_NONE;
-    regs.r10 = 0;
-    regs.r8 = 0;
-    regs.r9 = 0;
-    regs.rip += 1; /* 0xcc; syscall(0x0f05); 0xcc */
+#endif
+    /* The pc was restored to the start of the injected stub by
+       traceePreinitMmap; step it to the syscall instruction. */
+    REG_IP(regs) += stubSyscallOff;
+    REG_ARG1(regs) = vvarMap.procMapBase;
+    REG_ARG2(regs) = vvarMap.procMapSize;
+    REG_ARG3(regs) = PROT_NONE;
+    REG_ARG4(regs) = 0;
+    REG_ARG5(regs) = 0;
+    REG_ARG6(regs) = 0;
 
     int status;
 
-    ptracer::doPtrace(PTRACE_SETREGS, pid, 0, &regs);
+    ptracer::writeRegisters(pid, regs);
     ptracer::doPtrace(PTRACE_CONT, pid, 0, 0);
     VERIFY(waitpid(pid, &status, 0) == pid);
     VERIFY(WIFSTOPPED(status) && WSTOPSIG(status) == SIGTRAP);
-    ptracer::doPtrace(PTRACE_GETREGS, pid, 0, &regs);
-    if ((long)regs.rax < 0) {
+    ptracer::readRegisters(pid, regs);
+    if (regsReturnValue(regs) < 0) {
       string err = "unable to inject mprotect, error: \n";
-      runtimeError(err + strerror((long)-regs.rax));
+      runtimeError(err + strerror((int)-regsReturnValue(regs)));
     }
-    ptracer::doPtrace(PTRACE_SETREGS, pid, 0, &oldRegs);
+    ptracer::writeRegisters(pid, oldRegs);
   }
 }
 
@@ -761,32 +798,59 @@ static unsigned long traceePreinitMmap(pid_t pid, ptracer& t) {
   struct user_regs_struct regs;
   unsigned long ret;
 
-  ptracer::doPtrace(PTRACE_GETREGS, pid, 0, &regs);
+  ptracer::readRegisters(pid, regs);
   auto oldRegs = regs;
 
-  regs.orig_rax = SYS_mmap;
+  REG_SYSNUM(regs) = SYS_mmap;
+#if defined(__x86_64__)
   regs.rax = SYS_mmap;
-  regs.rdi = 0;
-  regs.rsi = 0x10000;
-  regs.rdx = PROT_READ | PROT_WRITE | PROT_EXEC;
-  regs.r10 = MAP_PRIVATE | MAP_ANONYMOUS;
-  regs.r8 = -1;
-  regs.r9 = 0;
+#endif
+  /* Move the pc from where the first breakpoint trap left it to the
+     syscall instruction of the injected stub (a no-op where the
+     breakpoint already advances the pc onto the syscall, e.g. x86 and
+     s390). */
+  REG_IP(regs) += stubSyscallOff - stubFirstTrapOff;
+#if defined(__s390x__)
+  /* s390's mmap syscall is the old single-argument form taking a
+     pointer to { addr, len, prot, flags, fd, offset }. There is no
+     tracee memory of ours yet (that is what this mmap is for), so
+     place the struct just below the stack pointer, which is unused
+     scratch space at the entry point. */
+  unsigned long mmapArgs[6] = {0, 0x10000, PROT_READ | PROT_WRITE | PROT_EXEC,
+                               MAP_PRIVATE | MAP_ANONYMOUS, (unsigned long)-1,
+                               0};
+  unsigned long argp = (REG_SP(regs) - sizeof(mmapArgs)) & ~15UL;
+  for (size_t i = 0; i < 6; i++) {
+    ptracer::doPtrace(
+        PTRACE_POKEDATA, pid, (void*)(argp + i * sizeof(long)),
+        (void*)mmapArgs[i]);
+  }
+  REG_ARG1(regs) = argp;
+#else
+  REG_ARG1(regs) = 0;
+  REG_ARG2(regs) = 0x10000;
+  REG_ARG3(regs) = PROT_READ | PROT_WRITE | PROT_EXEC;
+  REG_ARG4(regs) = MAP_PRIVATE | MAP_ANONYMOUS;
+  REG_ARG5(regs) = -1;
+  REG_ARG6(regs) = 0;
+#endif
 
   int status;
-  ptracer::doPtrace(PTRACE_SETREGS, pid, 0, &regs);
+  ptracer::writeRegisters(pid, regs);
   ptracer::doPtrace(PTRACE_CONT, pid, 0, 0);
   VERIFY(waitpid(pid, &status, 0) == pid);
   VERIFY(WIFSTOPPED(status) && WSTOPSIG(status) == SIGTRAP);
-  ptracer::doPtrace(PTRACE_GETREGS, pid, 0, &regs);
-  if ((long)regs.rax < 0) {
+  ptracer::readRegisters(pid, regs);
+  if (regsReturnValue(regs) < 0) {
     string err = "unable to inject syscall page, error: \n";
-    runtimeError(err + strerror((long)-regs.rax));
+    runtimeError(err + strerror((int)-regsReturnValue(regs)));
   }
-  ret = regs.rax;
-  oldRegs.rip = regs.rip - 4; /* 0xcc, syscall, 0xcc = 4 bytes */
+  ret = regsReturnValue(regs);
+  /* Rewind from behind the stub back to its start, where the original
+     instruction will be restored. */
+  REG_IP(oldRegs) = REG_IP(regs) - stubEndOff;
   memcpy(&regs, &oldRegs, sizeof(regs));
-  ptracer::doPtrace(PTRACE_SETREGS, pid, 0, &regs);
+  ptracer::writeRegisters(pid, regs);
 
   return ret;
 }
@@ -794,15 +858,29 @@ static unsigned long traceePreinitMmap(pid_t pid, ptracer& t) {
 void execution::handleExecEvent(pid_t pid) {
   struct user_regs_struct regs;
 
-  ptracer::doPtrace(PTRACE_GETREGS, pid, 0, &regs);
-  auto rip = regs.rip;
-  unsigned long stub = 0xcc050fccUL;
+  ptracer::readRegisters(pid, regs);
+  auto rip = REG_IP(regs);
   errno = 0;
 
-  auto saved_insn = tracer.doPtrace(PTRACE_PEEKTEXT, pid, (void*)rip, 0);
-  ptracer::doPtrace(
-      PTRACE_POKETEXT, pid, (void*)rip,
-      (void*)((saved_insn & ~0xffffffffUL) | stub));
+  /* Overwrite the instructions at the entry point with the
+     breakpoint; syscall; breakpoint stub, preserving the bytes of the
+     partially overwritten trailing word. */
+  const size_t stubWords = (sizeof(syscallStub) + sizeof(long) - 1) / sizeof(long);
+  long saved_insns[2];
+  unsigned char patched[sizeof(saved_insns)];
+  VERIFY(stubWords <= sizeof(saved_insns) / sizeof(saved_insns[0]));
+  for (size_t i = 0; i < stubWords; i++) {
+    saved_insns[i] =
+        tracer.doPtrace(PTRACE_PEEKTEXT, pid, (void*)(rip + i * sizeof(long)), 0);
+  }
+  memcpy(patched, saved_insns, sizeof(patched));
+  memcpy(patched, syscallStub, sizeof(syscallStub));
+  for (size_t i = 0; i < stubWords; i++) {
+    long word;
+    memcpy(&word, &patched[i * sizeof(long)], sizeof(word));
+    ptracer::doPtrace(
+        PTRACE_POKETEXT, pid, (void*)(rip + i * sizeof(long)), (void*)word);
+  }
   ptracer::doPtrace(PTRACE_CONT, pid, 0, 0);
 
   int status;
@@ -823,7 +901,11 @@ void execution::handleExecEvent(pid_t pid) {
   states.at(pid).mmapMemory.doesExist = true;
   states.at(pid).mmapMemory.setAddr(traceePtr<void>((void*)mmapAddr));
 
-  ptracer::doPtrace(PTRACE_POKETEXT, pid, (void*)rip, (void*)saved_insn);
+  for (size_t i = 0; i < stubWords; i++) {
+    ptracer::doPtrace(
+        PTRACE_POKETEXT, pid, (void*)(rip + i * sizeof(long)),
+        (void*)saved_insns[i]);
+  }
 }
 
 // =======================================================================================
@@ -852,7 +934,14 @@ bool execution::handleSeccomp(const pid_t traceesPid) {
   // small optimization we might not want to...
   // Get registers from tracee.
   tracer.updateState(traceesPid);
+  // Snapshot the syscall arguments now, while every argument register is
+  // still intact; the post-hook may run after the first argument register
+  // has been overwritten by the return value. Persist them per tracee so
+  // they survive scheduler switches to other tracees.
+  tracer.captureSyscallArgs();
+  tracer.saveSyscallArgs(states.at(traceesPid).syscallArgs);
 
+#if defined(__x86_64__)
   if (myGlobalState.allow_trapCPUID) {
     if (!states.at(traceesPid).CPUIDTrapSet && !myGlobalState.kernelPre4_12 &&
         NULL == getenv("DETTRACE_NO_CPUID_INTERCEPTION")) {
@@ -860,8 +949,14 @@ bool execution::handleSeccomp(const pid_t traceesPid) {
       trapCPUID(myGlobalState, states.at(traceesPid), tracer);
     }
   }
+#endif
 
   auto callPostHook = handlePreSystemCall(states.at(traceesPid), traceesPid);
+#if defined(__s390x__)
+  // Remember the (possibly changed) syscall number for the post-hook;
+  // updateState re-decodes the original one from the svc instruction.
+  states.at(traceesPid).syscallNumber = tracer.getSystemCallNumber();
+#endif
   return callPostHook;
 }
 
@@ -909,6 +1004,10 @@ static const struct CPUIDRegs extended_cpuids[] =
 
 // =======================================================================================
 void execution::handleSignal(int sigNum, const pid_t traceesPid) {
+#if defined(__x86_64__)
+  // rdtsc, rdtscp and cpuid raise SIGSEGV because we trap them, emulate
+  // them with deterministic values. Other architectures have no
+  // equivalent user space instructions to determinize.
   if (sigNum == SIGSEGV) {
     tracer.updateState(traceesPid);
     uint32_t curr_insn32;
@@ -999,6 +1098,7 @@ void execution::handleSignal(int sigNum, const pid_t traceesPid) {
       return;
     }
   }
+#endif
 
   // Remember to deliver this signal to the tracee for next event! Happens in
   // getNextEvent.
@@ -1028,9 +1128,6 @@ bool execution::callPreHook(
 
   case SYS_chdir:
     return chdirSystemCall::handleDetPre(gs, s, t, sched);
-  case SYS_clone3:
-      failSystemCall(gs, s, t, ENOSYS);
-      return false;
 #ifdef SYS_close_range
   case SYS_close_range:
       failSystemCall(gs, s, t, ENOSYS);
@@ -1059,6 +1156,12 @@ bool execution::callPreHook(
   case SYS_seccomp:
       failSystemCall(gs, s, t, ENOSYS);
       return false;
+#ifdef SYS_riscv_hwprobe
+  // Hide the hardware capabilities, callers fall back to defaults.
+  case SYS_riscv_hwprobe:
+      failSystemCall(gs, s, t, ENOSYS);
+      return false;
+#endif
   case SYS_chmod:
     return chmodSystemCall::handleDetPre(gs, s, t, sched);
 
@@ -1286,6 +1389,11 @@ bool execution::callPreHook(
 
   case SYS_statfs:
     return statfsSystemCall::handleDetPre(gs, s, t, sched);
+#ifdef SYS_statfs64
+  case SYS_statfs64:
+  case SYS_fstatfs64:
+    return statfs64SystemCall::handleDetPre(gs, s, t, sched);
+#endif
 
   case SYS_stat:
     return statSystemCall::handleDetPre(gs, s, t, sched);
@@ -1630,6 +1738,11 @@ void execution::callPostHook(
 
   case SYS_statfs:
     return statfsSystemCall::handleDetPost(gs, s, t, sched);
+#ifdef SYS_statfs64
+  case SYS_statfs64:
+  case SYS_fstatfs64:
+    return statfs64SystemCall::handleDetPost(gs, s, t, sched);
+#endif
 
   case SYS_stat:
     return statSystemCall::handleDetPost(gs, s, t, sched);
@@ -1766,7 +1879,8 @@ tuple<ptraceEvent, pid_t, int> execution::getNextEvent(
         Importance::extra,
         "getNextEvent(): Waiting for next system call event.\n");
     struct user_regs_struct regs;
-    ptracer::doPtrace(PTRACE_GETREGS, pidToContinue, 0, &regs);
+    ptracer::readRegisters(pidToContinue, regs);
+#if defined(__x86_64__)
     // old glibc (2.13) calls (buggy) vsyscall for certain syscalls
     // such as time. this doesn't play along well with recent
     // kernels with seccomp-bpf support (4.4+)
@@ -1776,7 +1890,7 @@ tuple<ptraceEvent, pid_t, int> execution::getNextEvent(
       log.writeToLog(
           Importance::extra, "getNextEvent(): Looking at VDSO in old glibc.\n");
       int status;
-      int syscallNum = regs.orig_rax;
+      int syscallNum = regs.orig_rax; // x86_64 only, see guard above
       // vsyscall seccomp stop is a special case
       // single step would cause the vsyscall exit fully
       // we cannot use `PTRACE_SYSCALL` as it wouldn't stop
@@ -1815,6 +1929,11 @@ tuple<ptraceEvent, pid_t, int> execution::getNextEvent(
           ptrace(PTRACE_SYSCALL, pidToContinue, 0, (void*)signalToDeliver),
           "here at syscall!");
     }
+#else
+    doWithCheck(
+        ptrace(PTRACE_SYSCALL, pidToContinue, 0, (void*)signalToDeliver),
+        "here at syscall!");
+#endif
   } else {
     log.writeToLog(
         Importance::extra, "getNextEvent(): Waiting at ptrace(CONT).\n");
@@ -1932,6 +2051,7 @@ pid_t eraseChildEntry(multimap<pid_t, pid_t>& map, pid_t process) {
 }
 // =======================================================================================
 
+#if defined(__x86_64__)
 void trapCPUID(globalState& gs, state& s, ptracer& t) {
   gs.log.writeToLog(
       Importance::info,
@@ -1959,6 +2079,7 @@ void trapCPUID(globalState& gs, state& s, ptracer& t) {
   t.writeIp((uint64_t)t.getRip().ptr - 2);
   gs.log.writeToLog(Importance::info, "arch_prctl(%d, 0)\n", ARCH_SET_CPUID);
 }
+#endif
 
 void deleteMultimapEntry(
     unordered_multimap<pid_t, pid_t>& mymap, pid_t key, pid_t value) {

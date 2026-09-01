@@ -26,7 +26,8 @@ bool rnr::callPreHook(
 
   long prehook_retval = sysenter(
       user_data, &syscallState, s.traceePid, s.traceePid, syscallNumber,
-      regs.rdi, regs.rsi, regs.rdx, regs.r10, regs.r8, regs.r9);
+      REG_ARG1(regs), REG_ARG2(regs), REG_ARG3(regs), REG_ARG4(regs),
+      REG_ARG5(regs), REG_ARG6(regs));
   // If fingerprinter indicates that the syscall shouldn't be run,
   // cancel the syscall and set the return value
   if (syscallState.noop) {
@@ -56,7 +57,11 @@ void rnr::callPostHook(
     isNoop = false;
   }
   auto regs = t.getRegs();
+  // Use the cached first argument: on most non-x86 architectures the
+  // first-argument register has been overwritten by the return value by
+  // the time the post-hook runs.
   sysexit(
-      user_data, &syscallState, s.traceePid, s.traceePid, regs.orig_rax,
-      (long)regs.rax, regs.rdi, regs.rsi, regs.rdx, regs.r10, regs.r8, regs.r9);
+      user_data, &syscallState, s.traceePid, s.traceePid, REG_SYSNUM(regs),
+      regsReturnValue(regs), t.arg1(), REG_ARG2(regs), REG_ARG3(regs),
+      REG_ARG4(regs), REG_ARG5(regs), REG_ARG6(regs));
 }

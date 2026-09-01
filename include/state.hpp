@@ -2,7 +2,6 @@
 #define STATE_H
 
 #include <sys/ptrace.h>
-#include <sys/reg.h>
 #include <sys/select.h>
 #include <sys/timerfd.h>
 #include <sys/types.h>
@@ -265,6 +264,22 @@ public:
   uint64_t originalArg4 = 0; /**< original register arg 4 */
   uint64_t originalArg5 = 0; /**< original register arg 5 */
   uint64_t originalArg6 = 0; /**< original register arg 5 */
+
+  /**
+   * System call arguments captured at this tracee's syscall-entry stop,
+   * see ptracer::captureSyscallArgs. Kept per tracee so that the value
+   * survives across the pre/post stops even when other tracees are
+   * scheduled in between (the ptracer's own copy is shared).
+   */
+  uint64_t syscallArgs[6] = {0, 0, 0, 0, 0, 0};
+
+  /**
+   * Number of the system call between its pre and post stop, including
+   * any change made by changeSystemCall in the pre-hook. Used on s390
+   * where the number has to be decoded from the svc instruction, see
+   * ptracer::decodeSyscallNumber.
+   */
+  long syscallNumber = 0;
 
   /**
    * Debug level. Mainly used by the dettraceSytemCall classes to avoid doing

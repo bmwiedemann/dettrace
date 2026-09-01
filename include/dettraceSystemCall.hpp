@@ -10,6 +10,8 @@
 #include <signal.h>
 #include <sys/syscall.h> /* For SYS_xxx definitions */
 
+#include "syscallCompat.hpp"
+
 using namespace std;
 
 #define ARCH_GET_CPUID 0x1011
@@ -1440,6 +1442,27 @@ public:
   const int syscallNumber = SYS_statfs;
   const string syscallName = "statfs";
 };
+#ifdef SYS_statfs64
+// =======================================================================================
+/**
+ * int statfs64(const char *path, size_t sz, struct statfs64 *buf);
+ * int fstatfs64(int fd, size_t sz, struct statfs64 *buf);
+ *
+ * Legacy variants kept in the powerpc syscall table. On LP64 struct
+ * statfs64 has the same layout as struct statfs, only the buffer moves
+ * to the third argument.
+ */
+class statfs64SystemCall {
+public:
+  static bool handleDetPre(
+      globalState& gs, state& s, ptracer& t, scheduler& sched);
+  static void handleDetPost(
+      globalState& gs, state& s, ptracer& t, scheduler& sched);
+
+  const int syscallNumber = SYS_statfs64;
+  const string syscallName = "statfs64";
+};
+#endif
 // =======================================================================================
 /**
  * int symlink(const char *target, const char *linkpath);
