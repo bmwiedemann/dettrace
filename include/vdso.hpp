@@ -28,7 +28,20 @@ enum VDSOFunc {
   VDSO_gettimeofday,
   VDSO_time,
   VDSO_getrandom,
+  VDSO_riscv_hwprobe,
 };
+
+/**
+ * Minimum number of vDSO symbols we expect to find and patch.
+ * x86_64 exports __vdso_{time,clock_gettime,getcpu,gettimeofday};
+ * aarch64 only __kernel_{clock_gettime,gettimeofday} (plus
+ * __kernel_getrandom on kernels >= 6.11).
+ */
+#if defined(__x86_64__)
+#define MIN_VDSO_SYMBOLS 4
+#else
+#define MIN_VDSO_SYMBOLS 2
+#endif
 
 struct VDSOSymbol {
   unsigned long offset;

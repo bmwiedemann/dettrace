@@ -10,6 +10,8 @@
 #include <signal.h>
 #include <sys/syscall.h> /* For SYS_xxx definitions */
 
+#include "syscallCompat.hpp"
+
 using namespace std;
 
 #define ARCH_GET_CPUID 0x1011

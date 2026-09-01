@@ -1,4 +1,5 @@
 #include "utilSystemCalls.hpp"
+#include "syscallCompat.hpp"
 
 #include <fcntl.h>
 #include <sstream>
@@ -49,18 +50,39 @@ bool replaySyscallIfBlocked(
 // =======================================================================================
 void replaySystemCall(globalState& gs, ptracer& t, uint64_t systemCall) {
 #ifdef EXTRANEOUS_TRACEE_READS
+#if defined(__x86_64__)
   uint16_t minus2 = t.readFromTracee(
       traceePtr<uint16_t>((uint16_t*)((uint64_t)t.getRip().ptr - 2)),
       t.getPid());
   if (!(minus2 == 0x80CD || minus2 == 0x340F || minus2 == 0x050F)) {
     runtimeError("IP does not point to system call instruction!\n");
   }
+#elif defined(__s390x__)
+  uint16_t minus2 = t.readFromTracee(
+      traceePtr<uint16_t>((uint16_t*)((uint64_t)t.getRip().ptr - 2)),
+      t.getPid());
+  if ((minus2 & 0xff00) != 0x0a00 /* svc */) {
+    runtimeError("IP does not point to system call instruction!\n");
+  }
+#else
+  uint32_t minus4 = t.readFromTracee(
+      traceePtr<uint32_t>((uint32_t*)((uint64_t)t.getRip().ptr - 4)),
+      t.getPid());
+  if (minus4 != SYSCALL_INSN) {
+    runtimeError("IP does not point to system call instruction!\n");
+  }
+#endif
 #endif
 
   gs.totalReplays++;
   // Replay system call!
   t.changeSystemCall(systemCall);
-  t.writeIp((uint64_t)t.getRip().ptr - 2);
+  // Restore the argument registers: on most architectures the return
+  // value of the call we are replaying has overwritten the first
+  // argument register, and the retry logic may also have adjusted
+  // others; writeArgN keeps the cache authoritative.
+  t.writeSyscallArgsToRegs();
+  t.writeIp((uint64_t)t.getRip().ptr - syscallInsnSize);
 }
 // =======================================================================================
 void zeroOutStatfs(struct statfs& stats) {
@@ -212,18 +234,18 @@ void cancelSystemCall(globalState& gs, state& s, ptracer& t) {
   long cancelled = t.getSystemCallNumber();
   pid_t pid = t.getPid();
   t.changeSystemCall(-1);
-  ptracer::doPtrace(PTRACE_GETREGS, pid, 0, &regs);
+  ptracer::readRegisters(pid, regs);
 
-  long rax = regs.rax;
+  long retval = REG_RETVAL(regs);
 
-  regs.orig_rax = -1;
-  regs.rax = -1;
+  REG_SYSNUM(regs) = -1;
+  REG_RETVAL(regs) = -1;
 
   gs.log.writeToLog(
       Importance::info,
       "cancel pending syscall: " + to_string(cancelled) + "\n");
 
-  ptracer::doPtrace(PTRACE_SETREGS, pid, 0, &regs);
+  ptracer::writeRegisters(pid, regs);
   ptracer::doPtrace(PTRACE_SINGLESTEP, pid, 0, 0);
 
   int status = 0;
@@ -232,9 +254,9 @@ void cancelSystemCall(globalState& gs, state& s, ptracer& t) {
     int sig = WSTOPSIG(status);
     if (sig == SIGTRAP || sig == SIGCHLD) {
       // restore regs
-      regs.orig_rax = cancelled;
-      regs.rax = rax;
-      ptracer::doPtrace(PTRACE_SETREGS, pid, 0, &regs);
+      REG_SYSNUM(regs) = cancelled;
+      REG_RETVAL(regs) = retval;
+      ptracer::writeRegisters(pid, regs);
       return;
     }
   }

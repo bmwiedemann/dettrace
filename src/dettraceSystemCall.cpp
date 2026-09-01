@@ -1,5 +1,7 @@
 #include <arpa/inet.h>
+#if defined(__x86_64__)
 #include <asm/prctl.h>
+#endif
 #include <asm/termbits.h> /* struct termios2 for TCGETS2 */
 #include <errno.h>
 #include <fcntl.h> /* Obtain O_* constant definitions */
@@ -1120,11 +1122,14 @@ void ioctlSystemCall::handleDetPost(
   case FIOCLEX:
   case FIONREAD:
   case TCSETSF:
-  // glibc >= 2.42 implements tcgetattr/tcsetattr via the termios2 ioctls
+#ifdef TCGETS2
+  // glibc >= 2.42 implements tcgetattr/tcsetattr via the termios2 ioctls.
+  // powerpc has no termios2.
   case TCGETS2:
   case TCSETS2:
   case TCSETSW2:
   case TCSETSF2:
+#endif
   case TCGETA:
   case FIONCLEX:
   case SIOCGIFHWADDR:
@@ -1717,8 +1722,8 @@ void readSystemCall::handleDetPost(
   auto resetState = [&]() {
     // Restore user regs so that it appears as if only one syscall occurred
     t.setReturnRegister(s.totalBytes);
-    t.writeArg2(s.beforeRetry.rsi);
-    t.writeArg3(s.beforeRetry.rdx);
+    t.writeArg2(REG_ARG2(s.beforeRetry));
+    t.writeArg3(REG_ARG3(s.beforeRetry));
 
     // reset for next syscall that we may have to retry
     s.firstTrySystemcall = true;
@@ -1789,7 +1794,7 @@ void readSystemCall::handleDetPost(
 
   // EOF, or read returned everything we asked for.
   if (bytes_read == 0 || // EOF
-      s.totalBytes == s.beforeRetry.rdx) { // original bytes requested
+      s.totalBytes == REG_ARG3(s.beforeRetry)) { // original bytes requested
     gs.log.writeToLog(Importance::info, "EOF or read all bytes.\n");
     resetState();
   } else {
@@ -3115,8 +3120,8 @@ void writeSystemCall::handleDetPost(
     gs.log.writeToLog(Importance::info, "All bytes written.\n");
     t.setReturnRegister(s.totalBytes);
 
-    t.writeArg2(s.beforeRetry.rsi);
-    t.writeArg3(s.beforeRetry.rdx);
+    t.writeArg2(REG_ARG2(s.beforeRetry));
+    t.writeArg3(REG_ARG3(s.beforeRetry));
 
     s.firstTrySystemcall = true;
     s.totalBytes = 0;
@@ -3168,14 +3173,14 @@ void writeSystemCall::handleDetPost(
   }
   gs.log.writeToLog(Importance::info, "total bytes: %d.\n", bytes_written);
   gs.log.writeToLog(
-      Importance::info, "before retry rdx: %d.\n", s.beforeRetry.rdx);
+      Importance::info, "before retry rdx: %d.\n", REG_ARG3(s.beforeRetry));
 
   // Finally wrote all bytes user wanted.
 
   // The zero case should not really happen. But our fuse tests allow for this
   // behavior so we catch it here. Otherwise we forever try to read 0 bytes.
   // https://stackoverflow.com/questions/41904221/can-write2-return-0-bytes-written-and-what-to-do-if-it-does?utm_medium=organic&utm_source=google_rich_qa&utm_campaign=google_rich_qa
-  if (s.totalBytes == s.beforeRetry.rdx || bytes_written == 0) {
+  if (s.totalBytes == REG_ARG3(s.beforeRetry) || bytes_written == 0) {
     resetState();
   } else {
     gs.log.writeToLog(

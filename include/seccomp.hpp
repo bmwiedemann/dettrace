@@ -54,14 +54,14 @@ private:
    * Add system call to whitelist but no call to ptrace.
    * @param systemCall system call to add to whitelist.
    */
-  void noIntercept(uint16_t systemCall);
+  void noIntercept(int systemCall);
 
   /**
    * Add system call to whitelist but everytime it is called call ptrace to
    * intercept.
    * @param systemCall
    */
-  void intercept(uint16_t systemCall);
+  void intercept(int systemCall);
 
   /**
    * Add system call to whitelist.
@@ -69,7 +69,7 @@ private:
    * no. (useful debugging).
    * @param systemCall
    */
-  void intercept(uint16_t systemCall, bool cond);
+  void intercept(int systemCall, bool cond);
 
 public:
   /**

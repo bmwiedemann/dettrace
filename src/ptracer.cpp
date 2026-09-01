@@ -1,9 +1,13 @@
 extern "C" {
 #include <stdint.h>
 #include <string.h>
+#include <elf.h>
 #include <sys/ptrace.h>
+#if defined(__x86_64__)
 #include <sys/reg.h> /* For constants ORIG_EAX, etc */
+#endif
 #include <sys/syscall.h> /* For SYS_write, etc */
+#include <sys/uio.h>
 #include <sys/types.h>
 #include <sys/user.h>
 #include <sys/vfs.h>
@@ -32,28 +36,98 @@ ptracer::ptracer(pid_t pid) {
   }
 }
 
-uint64_t ptracer::arg1() { return regs.rdi; }
-uint64_t ptracer::arg2() { return regs.rsi; }
-uint64_t ptracer::arg3() { return regs.rdx; }
-uint64_t ptracer::arg4() { return regs.r10; }
-uint64_t ptracer::arg5() { return regs.r8; }
-uint64_t ptracer::arg6() { return regs.r9; }
+uint64_t ptracer::arg1() { return syscallArgs[0]; }
+uint64_t ptracer::arg2() { return syscallArgs[1]; }
+uint64_t ptracer::arg3() { return syscallArgs[2]; }
+uint64_t ptracer::arg4() { return syscallArgs[3]; }
+uint64_t ptracer::arg5() { return syscallArgs[4]; }
+uint64_t ptracer::arg6() { return syscallArgs[5]; }
+
+void ptracer::captureSyscallArgs() {
+  // At the syscall-entry stop every argument register still holds the
+  // value the tracee passed (on s390 the first argument is in gprs[2]
+  // which is not yet clobbered here).
+  syscallArgs[0] = REG_ARG1(regs);
+  syscallArgs[1] = REG_ARG2(regs);
+  syscallArgs[2] = REG_ARG3(regs);
+  syscallArgs[3] = REG_ARG4(regs);
+  syscallArgs[4] = REG_ARG5(regs);
+  syscallArgs[5] = REG_ARG6(regs);
+}
+
+void ptracer::saveSyscallArgs(uint64_t out[6]) const {
+  for (int i = 0; i < 6; i++) out[i] = syscallArgs[i];
+}
+
+void ptracer::restoreSyscallArgs(const uint64_t in[6]) {
+  for (int i = 0; i < 6; i++) syscallArgs[i] = in[i];
+}
+
+void ptracer::writeSyscallArgsToRegs() {
+  REG_ARG1(regs) = syscallArgs[0];
+  REG_ARG2(regs) = syscallArgs[1];
+  REG_ARG3(regs) = syscallArgs[2];
+  REG_ARG4(regs) = syscallArgs[3];
+  REG_ARG5(regs) = syscallArgs[4];
+  REG_ARG6(regs) = syscallArgs[5];
+#if defined(__s390x__)
+  regs.orig_gpr2 = syscallArgs[0];
+#endif
+  writeRegisters(traceePid, regs);
+}
 struct user_regs_struct ptracer::getRegs() {
   return regs;
 }
 
 void ptracer::setRegs(struct user_regs_struct newValues) {
   regs = newValues;
-  // Please note how the memory address is passed in data argument here.
-  // Which I guess sort of makes sense? We are passing data to it?
-  doPtrace(PTRACE_SETREGS, traceePid, nullptr, &regs);
+  writeRegisters(traceePid, regs);
   return;
 }
 
-traceePtr<void> ptracer::getRip() { return traceePtr<void>((void *)regs.rip); }
-traceePtr<void> ptracer::getRsp() { return traceePtr<void>((void *)regs.rsp); }
+void ptracer::readRegisters(pid_t pid, struct user_regs_struct& regs) {
+#if defined(__x86_64__)
+  doPtrace(PTRACE_GETREGS, pid, nullptr, &regs);
+#else
+  struct iovec iov = {&regs, sizeof(regs)};
+  doPtrace((enum __ptrace_request)PTRACE_GETREGSET, pid, (void*)NT_PRSTATUS, &iov);
+#endif
+}
 
-traceePtr<void> ptracer::getRax() { return traceePtr<void>((void *)regs.rax); }
+void ptracer::writeRegisters(pid_t pid, struct user_regs_struct& regs) {
+#if defined(__x86_64__)
+  doPtrace(PTRACE_SETREGS, pid, nullptr, &regs);
+#else
+  struct iovec iov = {&regs, sizeof(regs)};
+  doPtrace((enum __ptrace_request)PTRACE_SETREGSET, pid, (void*)NT_PRSTATUS, &iov);
+#endif
+}
+
+void ptracer::writeSyscallNumber(pid_t pid, long val) {
+#if defined(__aarch64__)
+  int sysnum = (int)val;
+  struct iovec iov = {&sysnum, sizeof(sysnum)};
+  doPtrace(
+      (enum __ptrace_request)PTRACE_SETREGSET, pid, (void*)NT_ARM_SYSTEM_CALL,
+      &iov);
+#elif defined(__s390x__)
+  int sysnum = (int)val;
+  struct iovec iov = {&sysnum, sizeof(sysnum)};
+  doPtrace(
+      (enum __ptrace_request)PTRACE_SETREGSET, pid, (void*)NT_S390_SYSTEM_CALL,
+      &iov);
+#else
+  struct user_regs_struct regs;
+  readRegisters(pid, regs);
+  REG_SYSNUM(regs) = val;
+  writeRegisters(pid, regs);
+#endif
+}
+
+traceePtr<void> ptracer::getRip() { return traceePtr<void>((void *)REG_IP(regs)); }
+traceePtr<void> ptracer::getRsp() { return traceePtr<void>((void *)REG_SP(regs)); }
+
+traceePtr<void> ptracer::getRax() { return traceePtr<void>((void *)regsReturnValue(regs)); }
 
 uint64_t ptracer::getEventMessage(pid_t traceePid) {
   long event;
@@ -62,20 +136,33 @@ uint64_t ptracer::getEventMessage(pid_t traceePid) {
   return event;
 }
 
-int ptracer::getReturnValue() { return (int)regs.rax; }
+int ptracer::getReturnValue() { return (int)regsReturnValue(regs); }
 
-uint64_t ptracer::getSystemCallNumber() { return regs.orig_rax; }
+uint64_t ptracer::getSystemCallNumber() {
+#if defined(__s390x__)
+  // Fetched from the NT_S390_SYSTEM_CALL regset in updateState.
+  return currentSyscall;
+#else
+  return REG_SYSNUM(regs);
+#endif
+}
 
 void ptracer::setReturnRegister(uint64_t retVal) {
-  regs.rax = retVal;
-  // Please note how the memory address is passed in data argument here.
-  // Which I guess sort of makes sense? We are passing data to it?
-  doPtrace(PTRACE_SETREGS, traceePid, nullptr, &regs);
+  regsSetReturnValue(regs, (long)retVal);
+  writeRegisters(traceePid, regs);
 }
 
 void ptracer::updateState(pid_t newPid) {
   traceePid = newPid;
-  doPtrace(PTRACE_GETREGS, traceePid, NULL, &regs);
+  readRegisters(traceePid, regs);
+#if defined(__s390x__)
+  int sysnum = 0;
+  struct iovec iov = {&sysnum, sizeof(sysnum)};
+  doPtrace(
+      (enum __ptrace_request)PTRACE_GETREGSET, traceePid,
+      (void*)NT_S390_SYSTEM_CALL, &iov);
+  currentSyscall = sysnum;
+#endif
 
   return;
 }
@@ -159,62 +246,85 @@ long ptracer::doPtrace(
 }
 
 void ptracer::changeSystemCall(uint64_t val) {
+#if defined(__x86_64__)
   regs.orig_rax = val;
   regs.rax = val;
-  doPtrace(PTRACE_SETREGS, traceePid, nullptr, &regs);
+  writeRegisters(traceePid, regs);
+#else
+  REG_SYSNUM(regs) = val;
+  writeRegisters(traceePid, regs);
+  // Writing the syscall number register does not (on all architectures)
+  // change which system call the kernel executes for the current syscall
+  // stop; aarch64 and s390x need a dedicated regset write.
+  writeSyscallNumber(traceePid, (long)val);
+#if defined(__s390x__)
+  currentSyscall = (long)val;
+#endif
+#endif
   return;
 }
 
 void ptracer::writeArg1(uint64_t val) {
-  regs.rdi = val;
-  doPtrace(PTRACE_SETREGS, traceePid, nullptr, &regs);
+#if defined(__s390x__)
+  regs.orig_gpr2 = val;
+#endif
+  REG_ARG1(regs) = val;
+  syscallArgs[0] = val;
+  writeRegisters(traceePid, regs);
 }
 
 void ptracer::writeArg2(uint64_t val) {
-  regs.rsi = val;
-  doPtrace(PTRACE_SETREGS, traceePid, nullptr, &regs);
+  REG_ARG2(regs) = val;
+  syscallArgs[1] = val;
+  writeRegisters(traceePid, regs);
 }
 void ptracer::writeArg3(uint64_t val) {
-  regs.rdx = val;
-  doPtrace(PTRACE_SETREGS, traceePid, nullptr, &regs);
+  REG_ARG3(regs) = val;
+  syscallArgs[2] = val;
+  writeRegisters(traceePid, regs);
 }
 
 void ptracer::writeArg4(uint64_t val) {
-  regs.r10 = val;
-  doPtrace(PTRACE_SETREGS, traceePid, nullptr, &regs);
+  REG_ARG4(regs) = val;
+  syscallArgs[3] = val;
+  writeRegisters(traceePid, regs);
 }
 
 void ptracer::writeArg5(uint64_t val) {
-  regs.r8 = val;
-  doPtrace(PTRACE_SETREGS, traceePid, nullptr, &regs);
+  REG_ARG5(regs) = val;
+  syscallArgs[4] = val;
+  writeRegisters(traceePid, regs);
 }
 
 void ptracer::writeArg6(uint64_t val) {
-  regs.r9 = val;
-  doPtrace(PTRACE_SETREGS, traceePid, nullptr, &regs);
+  REG_ARG6(regs) = val;
+  syscallArgs[5] = val;
+  writeRegisters(traceePid, regs);
 }
 
 void ptracer::writeIp(uint64_t val) {
-  regs.rip = val;
-  doPtrace(PTRACE_SETREGS, traceePid, nullptr, &regs);
+  REG_IP(regs) = val;
+  writeRegisters(traceePid, regs);
 }
 
 void ptracer::writeRax(uint64_t val) {
-  regs.rax = val;
-  doPtrace(PTRACE_SETREGS, traceePid, nullptr, &regs);
+  REG_RETVAL(regs) = val;
+  writeRegisters(traceePid, regs);
 }
 
+#if defined(__x86_64__)
 void ptracer::writeRbx(uint64_t val) {
   regs.rbx = val;
-  doPtrace(PTRACE_SETREGS, traceePid, nullptr, &regs);
+  writeRegisters(traceePid, regs);
 }
 
 void ptracer::writeRdx(uint64_t val) {
   regs.rdx = val;
-  doPtrace(PTRACE_SETREGS, traceePid, nullptr, &regs);
+  writeRegisters(traceePid, regs);
 }
 
 void ptracer::writeRcx(uint64_t val) {
   regs.rcx = val;
-  doPtrace(PTRACE_SETREGS, traceePid, nullptr, &regs);
+  writeRegisters(traceePid, regs);
 }
+#endif

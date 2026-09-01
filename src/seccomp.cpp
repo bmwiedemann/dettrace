@@ -7,8 +7,9 @@
 
 #include <sys/personality.h>
 #include <sys/ptrace.h>
-#include <sys/reg.h> /* For constants ORIG_EAX, etc */
 #include <sys/syscall.h> /* For SYS_write, etc */
+
+#include "syscallCompat.hpp"
 
 using namespace std;
 
@@ -246,6 +247,14 @@ void seccomp::loadRules(bool debug, bool convertUids) {
   // events dettrace relies on, so make self-sandboxing programs proceed
   // without their seccomp filter instead.
   intercept(SYS_seccomp);
+#ifdef SYS_riscv_flush_icache
+  // Instruction cache maintenance for JITs, no observable result.
+  noIntercept(SYS_riscv_flush_icache);
+#endif
+#ifdef SYS_riscv_hwprobe
+  // Fail with -ENOSYS so guests cannot observe hardware capabilities.
+  intercept(SYS_riscv_hwprobe);
+#endif
   // TODO: This system call
   intercept(SYS_connect);
 
@@ -366,7 +375,12 @@ void seccomp::loadRules(bool debug, bool convertUids) {
   // noIntercept(SYS_shmctl);
 }
 
-void seccomp::noIntercept(uint16_t systemCall) {
+void seccomp::noIntercept(int systemCall) {
+  // Skip system calls that do not exist on this architecture, see
+  // syscallCompat.hpp.
+  if (systemCall < 0) {
+    return;
+  }
   // Send system call number as data to tracer to avoid a ptrace(GET_REGS).
   int ret = seccomp_rule_add(ctx, SCMP_ACT_ALLOW, systemCall, 0);
   if (ret < 0) {
@@ -378,7 +392,12 @@ void seccomp::noIntercept(uint16_t systemCall) {
   return;
 }
 
-void seccomp::intercept(uint16_t systemCall) {
+void seccomp::intercept(int systemCall) {
+  // Skip system calls that do not exist on this architecture, see
+  // syscallCompat.hpp.
+  if (systemCall < 0) {
+    return;
+  }
   // Send system call number as data to tracer to avoid a ptrace(GET_REGS).
   int ret = seccomp_rule_add(ctx, SCMP_ACT_TRACE(systemCall), systemCall, 0);
   if (ret < 0) {
@@ -390,7 +409,7 @@ void seccomp::intercept(uint16_t systemCall) {
   return;
 }
 
-void seccomp::intercept(uint16_t systemCall, bool cond) {
+void seccomp::intercept(int systemCall, bool cond) {
   if (cond) {
     intercept(systemCall);
   } else {
