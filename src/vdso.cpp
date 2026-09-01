@@ -135,7 +135,9 @@ int proc_get_map_entries(pid_t pid, struct ProcMapEntry* ep, int size) {
   unsigned char* buffer = (unsigned char*)mmap(
       0, buffer_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1,
       0);
-  VERIFY(buffer != (unsigned char*)-1L);
+  if (buffer == MAP_FAILED) {
+    sysError("unable to mmap buffer for proc maps");
+  }
 
   unsigned long nr = 0;
   char *line = NULL, *text = (char*)buffer;
@@ -193,7 +195,9 @@ int proc_get_vdso_vvar(
 
   buff = (char*)mmap(
       0, buff_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-  VERIFY((unsigned char*)buff != (unsigned char*)-1UL);
+  if (buff == MAP_FAILED) {
+    sysError("unable to mmap buffer for proc maps");
+  }
 
   int fd = open(mapsFile, O_RDONLY);
   VERIFY(fd >= 0);
