@@ -72,6 +72,15 @@ static const unsigned char __vdso_gettimeofday[] = {
   , 0xc3                                         // retq
   , 0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00     // nopl 0x0(%rax, %rax, 1)
   , 0x00 };
+
+// vDSO getrandom (added in kernel 6.11) produces random bytes without a
+// syscall that could be intercepted, so make callers fall back to the
+// (intercepted) getrandom syscall by returning -ENOSYS, as documented in
+// the vgetrandom(3) man page.
+static const unsigned char __vdso_getrandom[] = {
+    0xb8, 0xda, 0xff, 0xff, 0xff                 // mov $-ENOSYS, %eax
+  , 0xc3                                         // retq
+  , 0x66, 0x90 };                                // nop
 // clang-format on
 
 /*
@@ -179,6 +188,8 @@ static const char* vdsoGetFuncNames(enum VDSOFunc func) {
     return "__vdso_gettimeofday";
   case VDSO_time:
     return "__vdso_time";
+  case VDSO_getrandom:
+    return "__vdso_getrandom";
     // no default let the compiler do exhaustive check
   }
 }
@@ -303,6 +314,10 @@ int proc_get_vdso_symbols(
         vdso[res].func = VDSO_time;
         vdso[res].code_size = sizeof(__vdso_time);
         vdso[res].code = (const unsigned char*)__vdso_time;
+      } else if (strcmp("__vdso_getrandom", name) == 0) {
+        vdso[res].func = VDSO_getrandom;
+        vdso[res].code_size = sizeof(__vdso_getrandom);
+        vdso[res].code = (const unsigned char*)__vdso_getrandom;
       } else {
         continue;
       }

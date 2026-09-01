@@ -27,6 +27,7 @@ enum VDSOFunc {
   VDSO_getcpu,
   VDSO_gettimeofday,
   VDSO_time,
+  VDSO_getrandom,
 };
 
 struct VDSOSymbol {
