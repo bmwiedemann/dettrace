@@ -47,6 +47,11 @@ void seccomp::loadRules(bool debug, bool convertUids) {
   // But it will be obvious.
   noIntercept(SYS_bind);
   noIntercept(SYS_splice);
+#ifdef SYS_copy_file_range
+  // Only works on regular files, so the result is deterministic like
+  // splice above. Used by coreutils >= 9.0 cat.
+  noIntercept(SYS_copy_file_range);
+#endif
   noIntercept(SYS_dup3);
   noIntercept(SYS_capget);
   noIntercept(SYS_capset);
