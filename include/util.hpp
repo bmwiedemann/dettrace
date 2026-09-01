@@ -41,7 +41,7 @@ V get_with_default(
  * Throws erro with dettrace tag for easy grepping. Use instead of explicit
  * throw runtime_error
  */
-void runtimeError(string error);
+[[noreturn]] void runtimeError(string error);
 
 extern unordered_map<int, string> futexCommands;
 extern unordered_map<int, string> futexAdditionalFlags;
@@ -69,7 +69,7 @@ int parseNum(const char* const numToParse);
  * @return the return value of the clib function.
  */
 int doWithCheck(int returnValue, const char* errorMessage);
-void sysError(const char* context);
+[[noreturn]] void sysError(const char* context);
 
 // =======================================================================================
 /**

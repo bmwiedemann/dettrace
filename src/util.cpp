@@ -44,7 +44,7 @@ unordered_map<int, string> futexAdditionalFlags = {
     {FUTEX_CMP_REQUEUE_PI_PRIVATE, " FUTEX_CMP_REQUEUE_PI_PRIVATE"}};
 
 /*======================================================================================*/
-void runtimeError(string error) {
+[[noreturn]] void runtimeError(string error) {
   throw runtime_error("dettrace runtime exception: " + error);
 }
 
@@ -80,7 +80,7 @@ int doWithCheck(int returnValue, const char* errorMessage) {
   return returnValue;
 }
 
-void sysError(const char* context) {
+[[noreturn]] void sysError(const char* context) {
   std::string message = strerror(errno);
   message += ":\n  ";
   message += context;
