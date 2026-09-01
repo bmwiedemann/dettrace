@@ -1,5 +1,6 @@
 #include <arpa/inet.h>
 #include <asm/prctl.h>
+#include <asm/termbits.h> /* struct termios2 for TCGETS2 */
 #include <errno.h>
 #include <fcntl.h> /* Obtain O_* constant definitions */
 #include <inttypes.h>
@@ -1119,6 +1120,11 @@ void ioctlSystemCall::handleDetPost(
   case FIOCLEX:
   case FIONREAD:
   case TCSETSF:
+  // glibc >= 2.42 implements tcgetattr/tcsetattr via the termios2 ioctls
+  case TCGETS2:
+  case TCSETS2:
+  case TCSETSW2:
+  case TCSETSF2:
   case TCGETA:
   case FIONCLEX:
   case SIOCGIFHWADDR:
