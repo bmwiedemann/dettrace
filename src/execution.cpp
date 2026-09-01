@@ -700,8 +700,12 @@ void execution::disableVdso(pid_t pid) {
     for (auto func : vdsoFuncs) {
       const auto& sym = func;
       unsigned long target = vdsoMap.procMapBase + sym.offset;
-      unsigned long nbUpper = alignUp(sym.size, sym.alignment);
-      unsigned long nb = alignUp(sym.code_size, sym.alignment);
+      // Only pad up to the symbol's own size (rounded up to whole words for
+      // PTRACE_POKETEXT). Rounding up to the section alignment can clobber
+      // the next symbol, e.g. __vdso_getrandom which starts 0x30 bytes after
+      // the 0x27 byte long __vdso_getcpu with a section alignment of 0x40.
+      unsigned long nbUpper = alignUp(sym.size, sizeof(long));
+      unsigned long nb = alignUp(sym.code_size, sizeof(long));
       VERIFY(nb <= nbUpper);
 
       for (auto i = 0; i < nb / sizeof(long); i++) {
