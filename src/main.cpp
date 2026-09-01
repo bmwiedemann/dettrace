@@ -263,13 +263,18 @@ static string getExePath(pid_t pid = 0) {
     snprintf(proc_pid_exe, PROC_PID_EXE_LEN, "/proc/%u/exe", pid);
   }
 
-  if ((nb = readlink(proc_pid_exe, path, REAL_PATH_LEN)) < 0) {
+  nb = readlink(proc_pid_exe, path, REAL_PATH_LEN);
+  if (nb < 0 || nb > REAL_PATH_LEN) {
     return "";
   }
   // readlink doesn't put null byte
   path[nb] = '\0';
 
   while (nb >= 0 && path[nb] != '/') --nb;
+  if (nb < 0) {
+    // no slash in path
+    return "";
+  }
   path[nb] = '\0';
   return path;
 #undef REAL_PATH_LEN
