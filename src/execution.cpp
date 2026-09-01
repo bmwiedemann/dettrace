@@ -1036,6 +1036,29 @@ bool execution::callPreHook(
       failSystemCall(gs, s, t, ENOSYS);
       return false;
 #endif
+#ifdef SYS_openat2
+  // Trigger fallback to openat, which we handle.
+  case SYS_openat2:
+      failSystemCall(gs, s, t, ENOSYS);
+      return false;
+#endif
+  // Pretend the kernel has no NUMA support to hide the host topology.
+  case SYS_get_mempolicy:
+      failSystemCall(gs, s, t, ENOSYS);
+      return false;
+#ifdef SYS_landlock_create_ruleset
+  // Pretend the kernel has no landlock support.
+  case SYS_landlock_create_ruleset:
+  case SYS_landlock_add_rule:
+  case SYS_landlock_restrict_self:
+      failSystemCall(gs, s, t, ENOSYS);
+      return false;
+#endif
+  // Pretend the kernel has no seccomp support so that guests do not
+  // install their own filters alongside ours.
+  case SYS_seccomp:
+      failSystemCall(gs, s, t, ENOSYS);
+      return false;
   case SYS_chmod:
     return chmodSystemCall::handleDetPre(gs, s, t, sched);
 

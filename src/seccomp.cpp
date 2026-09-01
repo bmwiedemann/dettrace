@@ -153,6 +153,9 @@ void seccomp::loadRules(bool debug, bool convertUids) {
   // differences.
   noIntercept(SYS_sched_getaffinity);
   noIntercept(SYS_sched_setaffinity);
+  // Pure query. The guest cannot change its scheduling policy, so this
+  // always returns the same value, like sched_getaffinity above.
+  noIntercept(SYS_sched_getscheduler);
   intercept(SYS_socket);
   noIntercept(SYS_sync);
   noIntercept(SYS_umask);
@@ -223,6 +226,26 @@ void seccomp::loadRules(bool debug, bool convertUids) {
 #ifdef SYS_close_range
   intercept(SYS_close_range);
 #endif
+#ifdef SYS_openat2
+  // Fails with -ENOSYS to trigger the callers' fallback to openat, which
+  // we handle. Used e.g. by gnulib and thus tar.
+  intercept(SYS_openat2);
+#endif
+  // Fails with -ENOSYS like on a kernel without NUMA support so that
+  // callers do not observe the host NUMA topology. Used e.g. by ps.
+  intercept(SYS_get_mempolicy);
+#ifdef SYS_landlock_create_ruleset
+  // Fail with -ENOSYS like on a kernel without landlock support. Programs
+  // sandboxing themselves (e.g. xz, file) then proceed without landlock.
+  intercept(SYS_landlock_create_ruleset);
+  intercept(SYS_landlock_add_rule);
+  intercept(SYS_landlock_restrict_self);
+#endif
+  // Fail with -ENOSYS like on a kernel without seccomp support. Guest
+  // filters would stack with our own filter and could divert the ptrace
+  // events dettrace relies on, so make self-sandboxing programs proceed
+  // without their seccomp filter instead.
+  intercept(SYS_seccomp);
   // TODO: This system call
   intercept(SYS_connect);
 
