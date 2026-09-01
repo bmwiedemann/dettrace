@@ -456,6 +456,10 @@ static int runTracee(
         auto err = std::string{"unable to chroot to "} + opts.chroot_dir;
         sysError(err.c_str());
       }
+      // ensure the cwd is inside the new root so the chroot cannot be escaped
+      if (chdir("/") == -1) {
+        sysError("unable to chdir to / after chroot");
+      }
     }
 
     // this have to be done before mount /dev/{u}random because the source file
