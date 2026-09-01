@@ -30,11 +30,11 @@ enum VDSOFunc {
 };
 
 struct VDSOSymbol {
-  enum VDSOFunc func;
   unsigned long offset;
   unsigned long size;
   unsigned long alignment;
   const unsigned char* code;
+  enum VDSOFunc func;
   unsigned int code_size;
 };
 
