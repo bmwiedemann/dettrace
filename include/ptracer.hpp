@@ -186,7 +186,7 @@ static const unsigned char syscallStub[] = {0x08, 0x00, 0xe0, 0x7f, 0x02, 0x00,
 const unsigned long stubFirstTrapOff = 0;
 const unsigned long stubSyscallOff = 4;
 const unsigned long stubEndOff = 8;
-#elif defined(__riscv)
+#elif defined(__riscv) && __riscv_xlen == 64
 static const unsigned char syscallStub[] = {0x73, 0x00, 0x10, 0x00, 0x73, 0x00,
                                             0x00, 0x00, 0x73, 0x00, 0x10, 0x00};
 const unsigned long stubFirstTrapOff = 0;

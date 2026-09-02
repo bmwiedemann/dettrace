@@ -80,6 +80,11 @@ struct user_regs_struct ptracer::getRegs() {
 void ptracer::setRegs(struct user_regs_struct newValues) {
   regs = newValues;
   writeRegisters(traceePid, regs);
+  // A wholesale register restore (e.g. popping the state saved before an
+  // injected system call) must also refresh the cached syscall arguments,
+  // otherwise a subsequent replaySystemCall would write the stale
+  // arguments of the injected call back over the restored registers.
+  captureSyscallArgs();
   return;
 }
 

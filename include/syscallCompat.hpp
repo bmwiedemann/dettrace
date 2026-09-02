@@ -102,9 +102,6 @@ static inline bool isSentinelSyscall(long num) {
 #ifndef SYS_rename
 #define SYS_rename SYSCALL_SENTINEL(25)
 #endif
-#ifndef SYS_renameat
-#define SYS_renameat SYSCALL_SENTINEL(35)
-#endif
 #ifndef SYS_rmdir
 #define SYS_rmdir SYSCALL_SENTINEL(26)
 #endif
@@ -131,6 +128,9 @@ static inline bool isSentinelSyscall(long num) {
 #endif
 #ifndef SYS_vfork
 #define SYS_vfork SYSCALL_SENTINEL(34)
+#endif
+#ifndef SYS_renameat
+#define SYS_renameat SYSCALL_SENTINEL(35)
 #endif
 #ifndef SYS_accept
 #define SYS_accept SYSCALL_SENTINEL(36)

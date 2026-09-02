@@ -937,7 +937,6 @@ bool execution::handleSeccomp(const pid_t traceesPid) {
   // has been overwritten by the return value. Persist them per tracee so
   // they survive scheduler switches to other tracees.
   tracer.captureSyscallArgs();
-  tracer.saveSyscallArgs(states.at(traceesPid).syscallArgs);
 
 #if defined(__x86_64__)
   if (myGlobalState.allow_trapCPUID) {
@@ -950,9 +949,14 @@ bool execution::handleSeccomp(const pid_t traceesPid) {
 #endif
 
   auto callPostHook = handlePreSystemCall(states.at(traceesPid), traceesPid);
+  // Persist the arguments for the post-hook only now, after the pre-hook
+  // ran: writeArgN keeps the cache in sync, so a post-hook's argN() sees
+  // what the pre-hook rewrote, exactly like the live registers used to on
+  // x86_64. The return value cannot leak in, it is only written at exit.
+  tracer.saveSyscallArgs(states.at(traceesPid).syscallArgs);
 #if defined(__s390x__)
-  // Remember the (possibly changed) syscall number for the post-hook;
-  // updateState re-decodes the original one from the svc instruction.
+  // Likewise the (possibly changed) syscall number; updateState re-decodes
+  // the original one from the svc instruction.
   states.at(traceesPid).syscallNumber = tracer.getSystemCallNumber();
 #endif
   return callPostHook;
@@ -1922,16 +1926,13 @@ tuple<ptraceEvent, pid_t, int> execution::getNextEvent(
       // since our vsyscall has been *emulated*
 
       ptracer::doPtrace(PTRACE_CONT, pidToContinue, 0, (void*)signalToDeliver);
-    } else {
+    } else
+#endif
+    {
       doWithCheck(
           ptrace(PTRACE_SYSCALL, pidToContinue, 0, (void*)signalToDeliver),
           "here at syscall!");
     }
-#else
-    doWithCheck(
-        ptrace(PTRACE_SYSCALL, pidToContinue, 0, (void*)signalToDeliver),
-        "here at syscall!");
-#endif
   } else {
     log.writeToLog(
         Importance::extra, "getNextEvent(): Waiting at ptrace(CONT).\n");
