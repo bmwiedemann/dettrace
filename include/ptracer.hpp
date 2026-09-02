@@ -139,6 +139,19 @@ const size_t syscallInsnSize = 4;
 #error "dettrace only supports x86_64, aarch64, powerpc64le, riscv64 and s390x"
 #endif
 
+/**
+ * Word written over the vDSO text to trap any call into a function we
+ * did not replace, see execution::disableVdso. Whole-word fill of the
+ * architecture's breakpoint instruction.
+ */
+#if defined(__x86_64__)
+const unsigned long vdsoPoison = 0xccccccccccccccccUL; /* int3 */
+#elif defined(__s390x__)
+const unsigned long vdsoPoison = 0x0001000100010001UL; /* breakpoint */
+#else
+const unsigned long vdsoPoison = BREAK_INSN | (BREAK_INSN << 32);
+#endif
+
 /* The value of the first system-call argument at syscall entry. On most
    architectures this is REG_ARG1, but ppc and s390 preset that register
    to -ENOSYS at the seccomp-trace stop and keep the argument in a
@@ -400,13 +413,15 @@ public:
    */
   void writeIp(uint64_t val);
 
+#if defined(__x86_64__)
   /**
-   * Write  value to rax register.
+   * Write  value to rax register. Use setReturnRegister() to set a
+   * system call's return value; on some architectures that is not just
+   * a register write.
    * @param val new rax register value
    */
   void writeRax(uint64_t val);
 
-#if defined(__x86_64__)
   /**
    * Write value to rbx register.
    * @param val new rbx register value
@@ -472,12 +487,15 @@ public:
    */
   static void writeRegisters(pid_t pid, struct user_regs_struct& regs);
 
+#if defined(__aarch64__) || defined(__s390x__)
   /**
    * Set the system call the kernel executes for the current syscall stop.
-   * On x86_64 this is part of the register set (orig_rax); on aarch64 it
-   * must be written separately through the NT_ARM_SYSTEM_CALL regset.
+   * Everywhere else this is part of the register set (orig_rax, gpr[0],
+   * a7); on aarch64 and s390x it must be written separately through the
+   * NT_ARM_SYSTEM_CALL / NT_S390_SYSTEM_CALL regset.
    */
   static void writeSyscallNumber(pid_t pid, long val);
+#endif
   /**
    * All system call return an argument through their rax register.
    * Set state here.

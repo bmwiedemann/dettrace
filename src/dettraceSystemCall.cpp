@@ -2542,7 +2542,7 @@ void timeSystemCall::handleDetPost(
     gs.log.writeToLog(
         Importance::info, "time: tloc is null, returning %d\n",
         secs_since_epoch);
-    t.writeRax(secs_since_epoch);
+    t.setReturnRegister(secs_since_epoch);
     if (timePtr != nullptr) {
       t.writeToTracee(
           traceePtr<time_t>(timePtr), secs_since_epoch, s.traceePid);

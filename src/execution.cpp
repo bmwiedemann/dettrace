@@ -744,13 +744,7 @@ void execution::disableVdso(pid_t pid) {
       }
 
       unsigned long off = target + nb;
-#if defined(__x86_64__)
-      unsigned long val = 0xccccccccccccccccUL; /* int3 */
-#elif defined(__s390x__)
-      unsigned long val = 0x0001000100010001UL; /* breakpoint */
-#else
-      unsigned long val = BREAK_INSN | (BREAK_INSN << 32);
-#endif
+      unsigned long val = vdsoPoison;
       while (nb < nbUpper) {
         ptracer::doPtrace(PTRACE_POKETEXT, pid, (void*)off, (void*)val);
         off += sizeof(long);
@@ -865,10 +859,10 @@ void execution::handleExecEvent(pid_t pid) {
   /* Overwrite the instructions at the entry point with the
      breakpoint; syscall; breakpoint stub, preserving the bytes of the
      partially overwritten trailing word. */
-  const size_t stubWords = (sizeof(syscallStub) + sizeof(long) - 1) / sizeof(long);
-  long saved_insns[2];
+  const size_t stubWords =
+      (sizeof(syscallStub) + sizeof(long) - 1) / sizeof(long);
+  long saved_insns[stubWords];
   unsigned char patched[sizeof(saved_insns)];
-  VERIFY(stubWords <= sizeof(saved_insns) / sizeof(saved_insns[0]));
   for (size_t i = 0; i < stubWords; i++) {
     saved_insns[i] =
         tracer.doPtrace(PTRACE_PEEKTEXT, pid, (void*)(rip + i * sizeof(long)), 0);

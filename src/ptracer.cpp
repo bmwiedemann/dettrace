@@ -101,26 +101,19 @@ void ptracer::writeRegisters(pid_t pid, struct user_regs_struct& regs) {
 #endif
 }
 
+#if defined(__aarch64__) || defined(__s390x__)
 void ptracer::writeSyscallNumber(pid_t pid, long val) {
 #if defined(__aarch64__)
-  int sysnum = (int)val;
-  struct iovec iov = {&sysnum, sizeof(sysnum)};
-  doPtrace(
-      (enum __ptrace_request)PTRACE_SETREGSET, pid, (void*)NT_ARM_SYSTEM_CALL,
-      &iov);
-#elif defined(__s390x__)
-  int sysnum = (int)val;
-  struct iovec iov = {&sysnum, sizeof(sysnum)};
-  doPtrace(
-      (enum __ptrace_request)PTRACE_SETREGSET, pid, (void*)NT_S390_SYSTEM_CALL,
-      &iov);
+  const int regset = NT_ARM_SYSTEM_CALL;
 #else
-  struct user_regs_struct regs;
-  readRegisters(pid, regs);
-  REG_SYSNUM(regs) = val;
-  writeRegisters(pid, regs);
+  const int regset = NT_S390_SYSTEM_CALL;
 #endif
+  int sysnum = (int)val;
+  struct iovec iov = {&sysnum, sizeof(sysnum)};
+  doPtrace(
+      (enum __ptrace_request)PTRACE_SETREGSET, pid, (void*)(long)regset, &iov);
 }
+#endif
 
 traceePtr<void> ptracer::getRip() { return traceePtr<void>((void *)REG_IP(regs)); }
 traceePtr<void> ptracer::getRsp() { return traceePtr<void>((void *)REG_SP(regs)); }
@@ -257,17 +250,18 @@ void ptracer::changeSystemCall(uint64_t val) {
 #if defined(__x86_64__)
   regs.orig_rax = val;
   regs.rax = val;
-  writeRegisters(traceePid, regs);
 #else
   REG_SYSNUM(regs) = val;
+#endif
   writeRegisters(traceePid, regs);
-  // Writing the syscall number register does not (on all architectures)
-  // change which system call the kernel executes for the current syscall
-  // stop; aarch64 and s390x need a dedicated regset write.
+#if defined(__aarch64__) || defined(__s390x__)
+  // Writing the syscall number register does not change which system call
+  // the kernel executes for the current syscall stop here, that takes a
+  // dedicated regset write.
   writeSyscallNumber(traceePid, (long)val);
+#endif
 #if defined(__s390x__)
   currentSyscall = (long)val;
-#endif
 #endif
   return;
 }
@@ -313,12 +307,12 @@ void ptracer::writeIp(uint64_t val) {
   writeRegisters(traceePid, regs);
 }
 
+#if defined(__x86_64__)
 void ptracer::writeRax(uint64_t val) {
   REG_RETVAL(regs) = val;
   writeRegisters(traceePid, regs);
 }
 
-#if defined(__x86_64__)
 void ptracer::writeRbx(uint64_t val) {
   regs.rbx = val;
   writeRegisters(traceePid, regs);
