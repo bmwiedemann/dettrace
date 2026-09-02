@@ -810,9 +810,13 @@ static unsigned long traceePreinitMmap(pid_t pid, ptracer& t) {
      tracee memory of ours yet (that is what this mmap is for), so
      place the struct just below the stack pointer, which is unused
      scratch space at the entry point. */
-  unsigned long mmapArgs[6] = {0, 0x10000, PROT_READ | PROT_WRITE | PROT_EXEC,
-                               MAP_PRIVATE | MAP_ANONYMOUS, (unsigned long)-1,
-                               0};
+  unsigned long mmapArgs[6] = {
+      0,
+      0x10000,
+      PROT_READ | PROT_WRITE | PROT_EXEC,
+      MAP_PRIVATE | MAP_ANONYMOUS,
+      (unsigned long)-1,
+      0};
   unsigned long argp = (REG_SP(regs) - sizeof(mmapArgs)) & ~15UL;
   for (size_t i = 0; i < 6; i++) {
     ptracer::doPtrace(
@@ -864,8 +868,8 @@ void execution::handleExecEvent(pid_t pid) {
   long saved_insns[stubWords];
   unsigned char patched[sizeof(saved_insns)];
   for (size_t i = 0; i < stubWords; i++) {
-    saved_insns[i] =
-        tracer.doPtrace(PTRACE_PEEKTEXT, pid, (void*)(rip + i * sizeof(long)), 0);
+    saved_insns[i] = tracer.doPtrace(
+        PTRACE_PEEKTEXT, pid, (void*)(rip + i * sizeof(long)), 0);
   }
   memcpy(patched, saved_insns, sizeof(patched));
   memcpy(patched, syscallStub, sizeof(syscallStub));
@@ -1153,8 +1157,8 @@ bool execution::callPreHook(
 #ifdef SYS_riscv_hwprobe
   // Hide the hardware capabilities, callers fall back to defaults.
   case SYS_riscv_hwprobe:
-      failSystemCall(gs, s, t, ENOSYS);
-      return false;
+    failSystemCall(gs, s, t, ENOSYS);
+    return false;
 #endif
   case SYS_chmod:
     return chmodSystemCall::handleDetPre(gs, s, t, sched);

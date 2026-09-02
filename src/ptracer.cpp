@@ -88,7 +88,8 @@ void ptracer::readRegisters(pid_t pid, struct user_regs_struct& regs) {
   doPtrace(PTRACE_GETREGS, pid, nullptr, &regs);
 #else
   struct iovec iov = {&regs, sizeof(regs)};
-  doPtrace((enum __ptrace_request)PTRACE_GETREGSET, pid, (void*)NT_PRSTATUS, &iov);
+  doPtrace(
+      (enum __ptrace_request)PTRACE_GETREGSET, pid, (void*)NT_PRSTATUS, &iov);
 #endif
 }
 
@@ -97,7 +98,8 @@ void ptracer::writeRegisters(pid_t pid, struct user_regs_struct& regs) {
   doPtrace(PTRACE_SETREGS, pid, nullptr, &regs);
 #else
   struct iovec iov = {&regs, sizeof(regs)};
-  doPtrace((enum __ptrace_request)PTRACE_SETREGSET, pid, (void*)NT_PRSTATUS, &iov);
+  doPtrace(
+      (enum __ptrace_request)PTRACE_SETREGSET, pid, (void*)NT_PRSTATUS, &iov);
 #endif
 }
 
@@ -115,10 +117,16 @@ void ptracer::writeSyscallNumber(pid_t pid, long val) {
 }
 #endif
 
-traceePtr<void> ptracer::getRip() { return traceePtr<void>((void *)REG_IP(regs)); }
-traceePtr<void> ptracer::getRsp() { return traceePtr<void>((void *)REG_SP(regs)); }
+traceePtr<void> ptracer::getRip() {
+  return traceePtr<void>((void*)REG_IP(regs));
+}
+traceePtr<void> ptracer::getRsp() {
+  return traceePtr<void>((void*)REG_SP(regs));
+}
 
-traceePtr<void> ptracer::getRax() { return traceePtr<void>((void *)regsReturnValue(regs)); }
+traceePtr<void> ptracer::getRax() {
+  return traceePtr<void>((void*)regsReturnValue(regs));
+}
 
 uint64_t ptracer::getEventMessage(pid_t traceePid) {
   long event;

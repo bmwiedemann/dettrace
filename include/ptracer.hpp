@@ -175,20 +175,20 @@ const unsigned long stubFirstTrapOff = 1;
 const unsigned long stubSyscallOff = 1;
 const unsigned long stubEndOff = 4;
 #elif defined(__aarch64__)
-static const unsigned char syscallStub[] = {
-    0x00, 0x00, 0x20, 0xd4, 0x01, 0x00, 0x00, 0xd4, 0x00, 0x00, 0x20, 0xd4};
+static const unsigned char syscallStub[] = {0x00, 0x00, 0x20, 0xd4, 0x01, 0x00,
+                                            0x00, 0xd4, 0x00, 0x00, 0x20, 0xd4};
 const unsigned long stubFirstTrapOff = 0;
 const unsigned long stubSyscallOff = 4;
 const unsigned long stubEndOff = 8;
 #elif defined(__powerpc64__)
-static const unsigned char syscallStub[] = {
-    0x08, 0x00, 0xe0, 0x7f, 0x02, 0x00, 0x00, 0x44, 0x08, 0x00, 0xe0, 0x7f};
+static const unsigned char syscallStub[] = {0x08, 0x00, 0xe0, 0x7f, 0x02, 0x00,
+                                            0x00, 0x44, 0x08, 0x00, 0xe0, 0x7f};
 const unsigned long stubFirstTrapOff = 0;
 const unsigned long stubSyscallOff = 4;
 const unsigned long stubEndOff = 8;
 #elif defined(__riscv)
-static const unsigned char syscallStub[] = {
-    0x73, 0x00, 0x10, 0x00, 0x73, 0x00, 0x00, 0x00, 0x73, 0x00, 0x10, 0x00};
+static const unsigned char syscallStub[] = {0x73, 0x00, 0x10, 0x00, 0x73, 0x00,
+                                            0x00, 0x00, 0x73, 0x00, 0x10, 0x00};
 const unsigned long stubFirstTrapOff = 0;
 const unsigned long stubSyscallOff = 4;
 const unsigned long stubEndOff = 8;

@@ -162,8 +162,8 @@ static pid_t _dettrace(const TraceOptions* opts) {
     numVdsoSyms = proc_get_vdso_symbols(&vdso, vdsoSyms, 8);
     if (numVdsoSyms < MIN_VDSO_SYMBOLS) {
       runtimeError(
-          "VDSO symbol map has only " + to_string(numVdsoSyms) + ", expect at least " +
-          to_string(MIN_VDSO_SYMBOLS) + "!");
+          "VDSO symbol map has only " + to_string(numVdsoSyms) +
+          ", expect at least " + to_string(MIN_VDSO_SYMBOLS) + "!");
     }
   }
 
