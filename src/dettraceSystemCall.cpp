@@ -1662,49 +1662,51 @@ void pollSystemCall::handleDetPost(
   auto rptr = traceePtr<struct pollfd>((struct pollfd*)t.arg1());
   int nfds = (int)t.arg2();
 
-  if (retval > 0 || rptr.ptr == NULL || nfds == 0 || timeout == 0) {
+  // Done, or the retry budget is used up: reset the retry state either
+  // way, otherwise the next poll starts with a stale timeout and count.
+  if (retval > 0 || rptr.ptr == NULL || nfds == 0 || timeout == 0 ||
+      s.poll_retry_count >= s.poll_retry_maximum) {
     s.originalArg3 = 0;
     s.poll_retry_count = 0;
     s.poll_retry_maximum = LONG_MAX;
+    s.userDefinedTimeout = false;
     return;
   }
 
-  if (s.poll_retry_count++ < s.poll_retry_maximum) {
-    bool replay = replaySyscallIfBlocked(gs, s, t, sched, 0);
-    if (replay) {
-      t.writeArg3(s.originalArg3);
-    }
+  s.poll_retry_count++;
+  bool replay = replaySyscallIfBlocked(gs, s, t, sched, 0);
+  if (replay) {
+    t.writeArg3(s.originalArg3);
   }
   return;
 }
 // =======================================================================================
+// This is what glibc's poll() is on aarch64/riscv64, so handle the timeout
+// like pollSystemCall does: a zero timeout is a probe that must not be
+// retried, a positive one bounds the retries, NULL blocks.
 bool ppollSystemCall::handleDetPre(
     globalState& gs, state& s, ptracer& t, scheduler& sched) {
-  struct timespec ourTimeout = {0};
-  if (t.arg3() != 0) {
-    s.userDefinedTimeout = true;
-    s.originalArg3 = t.arg3();
-  }
-
   struct timespec* timeoutPtr = (struct timespec*)t.arg3();
-  s.originalArg3 = (uint64_t)timeoutPtr;
 
-  if (timeoutPtr == nullptr) {
-    // Has to be created in memory.
-    struct timespec* newAddr = (struct timespec*)s.mmapMemory.getAddr().ptr;
-    t.writeToTracee(
-        traceePtr<struct timespec>(newAddr), ourTimeout, s.traceePid);
-
-    t.writeArg3((uint64_t)newAddr);
-  } else {
-    // Already exists in memory.
-    // jld: useless read from tracee memory
-    // timeval timeout = t.readFromTracee(traceePtr<timeval>(timeoutPtr),
-    // t.getPid());
-    t.writeToTracee(
-        traceePtr<struct timespec>(timeoutPtr), ourTimeout, s.traceePid);
-    s.userDefinedTimeout = true;
+  // Only on the first entry, not on our replays (poll_retry_count > 0).
+  if (s.poll_retry_count == 0) {
+    if (timeoutPtr == nullptr) {
+      s.poll_retry_maximum = LONG_MAX;
+    } else {
+      struct timespec ts = t.readFromTracee(
+          traceePtr<struct timespec>(timeoutPtr), s.traceePid);
+      s.poll_retry_maximum = ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+    }
   }
+  s.originalArg3 = (uint64_t)timeoutPtr;
+  s.userDefinedTimeout = timeoutPtr != nullptr;
+
+  // Point the call at a zero timeout in our scratch page, leaving the
+  // tracee's (possibly read-only) struct untouched.
+  struct timespec* newAddr = (struct timespec*)s.mmapMemory.getAddr().ptr;
+  struct timespec ourTimeout = {0};
+  t.writeToTracee(traceePtr<struct timespec>(newAddr), ourTimeout, s.traceePid);
+  t.writeArg3((uint64_t)newAddr);
 
   return true;
 }
@@ -1715,18 +1717,19 @@ void ppollSystemCall::handleDetPost(
   auto rptr = traceePtr<struct pollfd>((struct pollfd*)t.arg1());
   int nfds = (int)t.arg2();
 
-  if (retval > 0 || rptr.ptr == NULL || nfds == 0) {
+  if (retval > 0 || rptr.ptr == NULL || nfds == 0 ||
+      s.poll_retry_count >= s.poll_retry_maximum) {
     s.originalArg3 = 0;
     s.poll_retry_count = 0;
     s.poll_retry_maximum = LONG_MAX;
+    s.userDefinedTimeout = false;
     return;
   }
 
-  if (s.poll_retry_count++ < s.poll_retry_maximum) {
-    bool replay = replaySyscallIfBlocked(gs, s, t, sched, 0);
-    if (replay) {
-      t.writeArg3(s.originalArg3);
-    }
+  s.poll_retry_count++;
+  bool replay = replaySyscallIfBlocked(gs, s, t, sched, 0);
+  if (replay) {
+    t.writeArg3(s.originalArg3);
   }
   return;
 }
