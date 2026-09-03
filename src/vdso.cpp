@@ -55,6 +55,16 @@ static const unsigned char __vdso_clock_gettime[] = {
   , 0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00    // nopl 0x0(%rax, %rax, 1)
   , 0x00 };
 
+// The generic vDSO's clock_getres reads the resolution from the vvar
+// page, which disableVdso maps PROT_NONE, so it has to become a syscall
+// too (clock_getres is not intercepted, its result is deterministic).
+static const unsigned char __vdso_clock_getres[] = {
+    0xb8, 0xe5, 0x00, 0x00, 0x00                // mov SYS_clock_getres, %eax
+  , 0x0f, 0x05                                  // syscall
+  , 0xc3                                        // retq
+  , 0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00    // nopl 0x0(%rax, %rax, 1)
+  , 0x00 };
+
 // returns 0 regardless
 static const unsigned char __vdso_getcpu[] = {
     0x48, 0x85, 0xff                                   // test %rdi, %rdi
@@ -95,6 +105,13 @@ static const unsigned char __kernel_gettimeofday[] = {
   , 0xc0, 0x03, 0x5f, 0xd6                       // ret
   , 0x1f, 0x20, 0x03, 0xd5 };                    // nop
 
+// See the x86_64 __vdso_clock_getres above.
+static const unsigned char __kernel_clock_getres[] = {
+    0x48, 0x0e, 0x80, 0xd2                       // mov x8, #114 (SYS_clock_getres)
+  , 0x01, 0x00, 0x00, 0xd4                       // svc #0
+  , 0xc0, 0x03, 0x5f, 0xd6                       // ret
+  , 0x1f, 0x20, 0x03, 0xd5 };                    // nop
+
 // See the x86_64 __vdso_getrandom above: force the fallback to the
 // intercepted getrandom syscall.
 static const unsigned char __kernel_getrandom[] = {
@@ -109,6 +126,13 @@ static const unsigned char __vdso_clock_gettime[] = {
 
 static const unsigned char __vdso_gettimeofday[] = {
     0x93, 0x08, 0x90, 0x0a                       // li a7, 169 (SYS_gettimeofday)
+  , 0x73, 0x00, 0x00, 0x00                       // ecall
+  , 0x67, 0x80, 0x00, 0x00                       // ret
+  , 0x13, 0x00, 0x00, 0x00 };                    // nop
+
+// See the x86_64 __vdso_clock_getres above.
+static const unsigned char __vdso_clock_getres[] = {
+    0x93, 0x08, 0x20, 0x07                       // li a7, 114 (SYS_clock_getres)
   , 0x73, 0x00, 0x00, 0x00                       // ecall
   , 0x67, 0x80, 0x00, 0x00                       // ret
   , 0x13, 0x00, 0x00, 0x00 };                    // nop
@@ -157,6 +181,13 @@ static const unsigned char __kernel_gettimeofday[] = {
   , 0x20, 0x00, 0x80, 0x4e                       // blr
   , 0x00, 0x00, 0x00, 0x60 };                    // nop
 
+// See the x86_64 __vdso_clock_getres above.
+static const unsigned char __kernel_clock_getres[] = {
+    0xf7, 0x00, 0x00, 0x38                       // li r0, 247 (SYS_clock_getres)
+  , 0x02, 0x00, 0x00, 0x44                       // sc
+  , 0x20, 0x00, 0x80, 0x4e                       // blr
+  , 0x00, 0x00, 0x00, 0x60 };                    // nop
+
 // returns cpu 0, node 0, like the x86_64 __vdso_getcpu
 static const unsigned char __kernel_getcpu[] = {
     0x00, 0x00, 0x20, 0x39                       // li r9, 0
@@ -186,6 +217,12 @@ static const unsigned char __kernel_clock_gettime[] = {
 
 static const unsigned char __kernel_gettimeofday[] = {
     0xa7, 0x19, 0x00, 0x4e                       // lghi %r1, 78 (SYS_gettimeofday)
+  , 0x0a, 0x00                                   // svc 0
+  , 0x07, 0xfe };                                // br %r14
+
+// See the x86_64 __vdso_clock_getres above.
+static const unsigned char __kernel_clock_getres[] = {
+    0xa7, 0x19, 0x01, 0x05                       // lghi %r1, 261 (SYS_clock_getres)
   , 0x0a, 0x00                                   // svc 0
   , 0x07, 0xfe };                                // br %r14
 
@@ -320,6 +357,8 @@ static const char* vdsoGetFuncNames(enum VDSOFunc func) {
     return "__vdso_getrandom";
   case VDSO_riscv_hwprobe:
     return "__vdso_riscv_hwprobe";
+  case VDSO_clock_getres:
+    return "__vdso_clock_getres";
     // no default let the compiler do exhaustive check
   }
 }
@@ -445,6 +484,10 @@ int proc_get_vdso_symbols(
         vdso[res].func = VDSO_time;
         vdso[res].code_size = sizeof(__vdso_time);
         vdso[res].code = (const unsigned char*)__vdso_time;
+      } else if (strcmp("__vdso_clock_getres", name) == 0) {
+        vdso[res].func = VDSO_clock_getres;
+        vdso[res].code_size = sizeof(__vdso_clock_getres);
+        vdso[res].code = (const unsigned char*)__vdso_clock_getres;
       } else if (strcmp("__vdso_getrandom", name) == 0) {
         vdso[res].func = VDSO_getrandom;
         vdso[res].code_size = sizeof(__vdso_getrandom);
@@ -461,6 +504,10 @@ int proc_get_vdso_symbols(
         vdso[res].func = VDSO_gettimeofday;
         vdso[res].code_size = sizeof(__kernel_gettimeofday);
         vdso[res].code = (const unsigned char*)__kernel_gettimeofday;
+      } else if (strcmp("__kernel_clock_getres", name) == 0) {
+        vdso[res].func = VDSO_clock_getres;
+        vdso[res].code_size = sizeof(__kernel_clock_getres);
+        vdso[res].code = (const unsigned char*)__kernel_clock_getres;
       } else if (strcmp("__kernel_getrandom", name) == 0) {
         vdso[res].func = VDSO_getrandom;
         vdso[res].code_size = sizeof(__kernel_getrandom);
@@ -481,6 +528,10 @@ int proc_get_vdso_symbols(
         vdso[res].func = VDSO_getcpu;
         vdso[res].code_size = sizeof(__vdso_getcpu);
         vdso[res].code = (const unsigned char*)__vdso_getcpu;
+      } else if (strcmp("__vdso_clock_getres", name) == 0) {
+        vdso[res].func = VDSO_clock_getres;
+        vdso[res].code_size = sizeof(__vdso_clock_getres);
+        vdso[res].code = (const unsigned char*)__vdso_clock_getres;
       } else if (strcmp("__vdso_getrandom", name) == 0) {
         vdso[res].func = VDSO_getrandom;
         vdso[res].code_size = sizeof(__vdso_getrandom);
@@ -509,6 +560,10 @@ int proc_get_vdso_symbols(
         vdso[res].func = VDSO_getcpu;
         vdso[res].code_size = sizeof(__kernel_getcpu);
         vdso[res].code = (const unsigned char*)__kernel_getcpu;
+      } else if (strcmp("__kernel_clock_getres", name) == 0) {
+        vdso[res].func = VDSO_clock_getres;
+        vdso[res].code_size = sizeof(__kernel_clock_getres);
+        vdso[res].code = (const unsigned char*)__kernel_clock_getres;
       } else if (strcmp("__kernel_getrandom", name) == 0) {
         vdso[res].func = VDSO_getrandom;
         vdso[res].code_size = sizeof(__kernel_getrandom);
@@ -529,6 +584,10 @@ int proc_get_vdso_symbols(
         vdso[res].func = VDSO_getcpu;
         vdso[res].code_size = sizeof(__kernel_getcpu);
         vdso[res].code = (const unsigned char*)__kernel_getcpu;
+      } else if (strcmp("__kernel_clock_getres", name) == 0) {
+        vdso[res].func = VDSO_clock_getres;
+        vdso[res].code_size = sizeof(__kernel_clock_getres);
+        vdso[res].code = (const unsigned char*)__kernel_clock_getres;
       } else if (strcmp("__kernel_getrandom", name) == 0) {
         vdso[res].func = VDSO_getrandom;
         vdso[res].code_size = sizeof(__kernel_getrandom);

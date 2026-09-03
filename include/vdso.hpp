@@ -29,6 +29,7 @@ enum VDSOFunc {
   VDSO_time,
   VDSO_getrandom,
   VDSO_riscv_hwprobe,
+  VDSO_clock_getres,
 };
 
 /**
