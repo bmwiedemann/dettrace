@@ -20,9 +20,14 @@ RandThread::RandThread(const std::string& fifo, unsigned short seed)
   // allocations DO get leaked If we wanted to not leak them, devRandThread
   // could copy to its stack and free the heap copy
   pthread_mutex_lock(&thread_mutex);
-  doWithCheck(
-      pthread_create(&thread, NULL, runThread, this),
-      "pthread_create /dev/random pthread");
+  // pthread functions return a positive errno instead of -1/errno, so
+  // doWithCheck would not notice a failure and the wait below would then
+  // block forever.
+  int rc = pthread_create(&thread, NULL, runThread, this);
+  if (rc != 0) {
+    errno = rc;
+    sysError("pthread_create /dev/random pthread");
+  }
   pthread_cond_wait(&thread_ready, &thread_mutex);
   // we should unlock then lock the mutex again, but just leave the mutex
   // locked assuming: unlock -> lock = ID?
@@ -46,9 +51,11 @@ void* RandThread::runThread(void* data_) {
 
   // allow this thread to be unilaterally killed when tracer exits
   int oldCancelType;
-  doWithCheck(
-      pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, &oldCancelType),
-      "pthread_setcanceltype");
+  int rc = pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, &oldCancelType);
+  if (rc != 0) {
+    errno = rc;
+    sysError("pthread_setcanceltype");
+  }
 
   // fprintf(stderr, "[devRandThread] using fifo  %s, seed: %x\n", fifo,
   // param->seed);
