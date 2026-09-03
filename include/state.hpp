@@ -122,6 +122,10 @@ public:
    * Map from file descriptors to directory entries.
    */
   unordered_map<int, directoryEntries<linux_dirent>> dirEntries;
+  /**
+   * Same for getdents64, whose entries carry d_type before d_name.
+   */
+  unordered_map<int, directoryEntries<linux_dirent64>> dirEntries64;
 
   /**
    * The pid of the process represented by this state.

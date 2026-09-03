@@ -2205,8 +2205,27 @@ void virtualizeEntries(
   }
 }
 // =======================================================================================
+/**
+ * The per-fd directory entry store for the dirent flavour T: the entries
+ * have to be parsed with the layout the kernel filled in, linux_dirent64
+ * carries d_type in front of d_name.
+ */
+template <typename T>
+unordered_map<int, directoryEntries<T>>& dirEntriesFor(state& s);
+template <>
+inline unordered_map<int, directoryEntries<linux_dirent>>&
+dirEntriesFor<linux_dirent>(state& s) {
+  return s.dirEntries;
+}
+template <>
+inline unordered_map<int, directoryEntries<linux_dirent64>>&
+dirEntriesFor<linux_dirent64>(state& s) {
+  return s.dirEntries64;
+}
+
 template <typename T>
 void handleDents(globalState& gs, state& s, ptracer& t, scheduler& sched) {
+  auto& dirEntries = dirEntriesFor<T>(s);
   // Error, return system call to tracee.
   if (t.getReturnValue() < 0) {
     return;
@@ -2219,12 +2238,11 @@ void handleDents(globalState& gs, state& s, ptracer& t, scheduler& sched) {
 
   // We have never seen this entry before! This is a new getdents call, not a
   // replay by us.
-  if (s.dirEntries.count(fd) == 0) {
+  if (dirEntries.count(fd) == 0) {
     auto msg = "Tracee requested getdents for the first time for fd: %d.\n";
     gs.log.writeToLog(Importance::info, msg, fd);
 
-    s.dirEntries.emplace(
-        fd, directoryEntries<linux_dirent>{s.dirEntriesBytes, gs.log});
+    dirEntries.emplace(fd, directoryEntries<T>{s.dirEntriesBytes, gs.log});
   }
 
   // We have read zero bytes. We're done!
@@ -2237,7 +2255,7 @@ void handleDents(globalState& gs, state& s, ptracer& t, scheduler& sched) {
     // originally asked for.
 
     vector<uint8_t> filledVector =
-        s.dirEntries.at(fd).getSortedEntries(traceeBufferSize);
+        dirEntries.at(fd).getSortedEntries(traceeBufferSize);
     virtualizeEntries<T>(filledVector, gs.inodeMap);
 
     gs.log.writeToLog(
@@ -2270,7 +2288,7 @@ void handleDents(globalState& gs, state& s, ptracer& t, scheduler& sched) {
     vector<uint8_t> newChunk{localBuffer, localBuffer + bytesToCopy};
 
     // Copy chunks over to our directory entry for this file descriptor.
-    s.dirEntries.at(fd).addChunk(newChunk);
+    dirEntries.at(fd).addChunk(newChunk);
 
     gs.log.writeToLog(
         Importance::info, "Replaying system call to read more bytes...\n");

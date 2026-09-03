@@ -195,6 +195,12 @@ void closeSystemCall::handleDetPost(
         Importance::info, "Removing directory entries for fd: %d!\n", fd);
     s.dirEntries.erase(result);
   }
+  auto result64 = s.dirEntries64.find(fd);
+  if (result64 != s.dirEntries64.end()) {
+    gs.log.writeToLog(
+        Importance::info, "Removing directory entries for fd: %d!\n", fd);
+    s.dirEntries64.erase(result64);
+  }
 
   // Remove entry from our fd set for pipes.
   if (s.countFdStatus(fd) != 0) {

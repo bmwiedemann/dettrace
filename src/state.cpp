@@ -42,6 +42,7 @@ state state::forked(pid_t childPid) const {
       make_shared<unordered_map<int, enum sighandler_type>>(
           *(this->currentSignalHandlers));
   childState.dirEntries = this->dirEntries;
+  childState.dirEntries64 = this->dirEntries64;
 
   childState.exfsNotNull = this->exfsNotNull;
   childState.rdfsNotNull = this->rdfsNotNull;
@@ -95,6 +96,7 @@ state state::cloned(pid_t childPid) const {
   childState.CPUIDTrapSet = this->CPUIDTrapSet;
   childState.currentSignalHandlers = this->currentSignalHandlers;
   childState.dirEntries = this->dirEntries;
+  childState.dirEntries64 = this->dirEntries64;
 
   childState.exfsNotNull = this->exfsNotNull;
   childState.rdfsNotNull = this->rdfsNotNull;
