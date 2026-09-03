@@ -109,7 +109,7 @@ private:
 
   uint64_t logEntryID = 0;
 
-  bool logPrintfFormattingEnabled; /**< Whether to enable interpretation of
+  bool logPrintfFormattingEnabled = true; /**< Whether to enable interpretation of
                                       printf format specifiers within log
                                       messages */
 };
