@@ -3086,7 +3086,17 @@ void unameSystemCall::handleDetPost(
     strncpy(myUts.sysname, "Linux", MEMBER_LENGTH);
     strncpy(myUts.release, "4.0", MEMBER_LENGTH);
     strncpy(myUts.version, "#1", MEMBER_LENGTH);
+#if defined(__aarch64__)
+    strncpy(myUts.machine, "aarch64", MEMBER_LENGTH);
+#elif defined(__powerpc64__)
+    strncpy(myUts.machine, "ppc64le", MEMBER_LENGTH);
+#elif defined(__s390x__)
+    strncpy(myUts.machine, "s390x", MEMBER_LENGTH);
+#elif defined(__riscv)
+    strncpy(myUts.machine, "riscv64", MEMBER_LENGTH);
+#else
     strncpy(myUts.machine, "x86_64", MEMBER_LENGTH);
+#endif
 
     t.writeToTracee(traceePtr<struct utsname>(utsnamePtr), myUts, t.getPid());
   }
