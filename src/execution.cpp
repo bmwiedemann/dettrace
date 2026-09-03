@@ -1401,7 +1401,7 @@ bool execution::callPreHook(
     return statSystemCall::handleDetPre(gs, s, t, sched);
 
   case SYS_statx:
-    return statSystemCall::handleDetPre(gs, s, t, sched);
+    return statxSystemCall::handleDetPre(gs, s, t, sched);
 
   case SYS_sysinfo:
     return sysinfoSystemCall::handleDetPre(gs, s, t, sched);
@@ -1750,7 +1750,7 @@ void execution::callPostHook(
     return statSystemCall::handleDetPost(gs, s, t, sched);
 
   case SYS_statx:
-    return statSystemCall::handleDetPost(gs, s, t, sched);
+    return statxSystemCall::handleDetPost(gs, s, t, sched);
 
   case SYS_sysinfo:
     return sysinfoSystemCall::handleDetPost(gs, s, t, sched);

@@ -2320,6 +2320,68 @@ void statSystemCall::handleDetPost(
   return;
 }
 // =======================================================================================
+bool statxSystemCall::handleDetPre(
+    globalState& gs, state& s, ptracer& t, scheduler& sched) {
+  printInfoString(t.arg2(), gs.log, s.traceePid, t);
+  return true;
+}
+
+void statxSystemCall::handleDetPost(
+    globalState& gs, state& s, ptracer& t, scheduler& sched) {
+  struct statx* statxPtr = (struct statx*)t.arg5();
+  if (statxPtr == nullptr) {
+    gs.log.writeToLog(Importance::info, "statx: statxbuf null.\n");
+    return;
+  }
+  if (t.getReturnValue() != 0) {
+    return;
+  }
+
+  // Mirror handleStatFamily: keep the fields that describe the file, make
+  // everything that identifies the host filesystem deterministic.
+  struct statx theirs =
+      t.readFromTracee(traceePtr<struct statx>(statxPtr), s.traceePid);
+  struct statx mine;
+  memset(&mine, 0, sizeof(mine));
+
+  mine.stx_mask = theirs.stx_mask;
+  mine.stx_attributes = theirs.stx_attributes;
+  mine.stx_attributes_mask = theirs.stx_attributes_mask;
+  mine.stx_mode = theirs.stx_mode;
+  mine.stx_uid = theirs.stx_uid;
+  mine.stx_gid = theirs.stx_gid;
+  mine.stx_rdev_major = theirs.stx_rdev_major;
+  mine.stx_rdev_minor = theirs.stx_rdev_minor;
+  mine.stx_size = S_ISDIR(theirs.stx_mode) ? 16384 : theirs.stx_size;
+  mine.stx_blksize = 512;
+  mine.stx_blocks = 1;
+  mine.stx_nlink = 1;
+  mine.stx_dev_major = 0; // st_dev = 1
+  mine.stx_dev_minor = 1;
+
+  ino_t realinode = theirs.stx_ino;
+  const auto mtime = get_with_default(gs.mtimeMap, realinode, gs.epoch);
+  const struct timespec epochTs = logical_clock::to_timespec(gs.epoch);
+  const struct timespec mtimeTs = logical_clock::to_timespec(mtime);
+  mine.stx_atime.tv_sec = epochTs.tv_sec;
+  mine.stx_atime.tv_nsec = epochTs.tv_nsec;
+  mine.stx_btime = mine.stx_atime;
+  mine.stx_ctime = mine.stx_atime;
+  mine.stx_mtime.tv_sec = mtimeTs.tv_sec;
+  mine.stx_mtime.tv_nsec = 999; // see handleStatFamily
+
+  mine.stx_ino = gs.inodeMap.realValueExists(realinode)
+                     ? gs.inodeMap.getVirtualValue(realinode)
+                     : gs.inodeMap.addRealValue(realinode);
+  gs.log.writeToLog(
+      Importance::info, "statx: realinode %lu -> %lu, mode 0%o, size %lu\n",
+      (unsigned long)realinode, (unsigned long)mine.stx_ino, mine.stx_mode,
+      (unsigned long)mine.stx_size);
+
+  t.writeToTracee(traceePtr<struct statx>(statxPtr), mine, s.traceePid);
+  return;
+}
+// =======================================================================================
 bool statfsSystemCall::handleDetPre(
     globalState& gs, state& s, ptracer& t, scheduler& sched) {
   return true;

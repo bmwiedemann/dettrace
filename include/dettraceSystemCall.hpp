@@ -1428,6 +1428,22 @@ public:
 };
 // =======================================================================================
 /**
+ * int statx(int dirfd, const char *pathname, int flags, unsigned int mask,
+ *           struct statx *statxbuf);
+ * Same virtualization as the stat family, on struct statx at arg5.
+ */
+class statxSystemCall {
+public:
+  static bool handleDetPre(
+      globalState& gs, state& s, ptracer& t, scheduler& sched);
+  static void handleDetPost(
+      globalState& gs, state& s, ptracer& t, scheduler& sched);
+
+  const int syscallNumber = SYS_statx;
+  const string syscallName = "statx";
+};
+// =======================================================================================
+/**
  * int statfs(const char *path, struct statfs *buf);
  * Implement various fields.
  * FILESYSTEM RELATED.
