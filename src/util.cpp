@@ -102,7 +102,7 @@ void throw_runtime_error_if_fail(
                          "' failed.\n";
     if (os_errno > 0) {
       errmsg += "           os error ";
-      errmsg += ("(" + std::to_string(errno) + "): ");
+      errmsg += ("(" + std::to_string(os_errno) + "): ");
       errmsg += strerror(os_errno);
       errmsg += "\n";
     }
