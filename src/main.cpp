@@ -594,8 +594,13 @@ programArgs parseProgramArguments(int argc, char* argv[]) {
             .unwrap_or(false);
     args.convertUids =
         (static_cast<OptionValue1>(result["convert-uids"])).unwrap_or(false);
+    // The template argument must match the declared option type: cxxopts
+    // (built without RTTI) reinterprets the stored value as whatever type
+    // is asked for, so unwrap_or(0) would read an int out of the unsigned
+    // long, which is 0 on big-endian.
     args.timeoutSeconds =
-        (static_cast<OptionValue1>(result["timeoutSeconds"])).unwrap_or(0);
+        (static_cast<OptionValue1>(result["timeoutSeconds"]))
+            .unwrap_or<unsigned long>(0);
     args.allow_network =
         (static_cast<OptionValue1>(result["network"])).unwrap_or(false);
     args.with_aslr =
@@ -603,7 +608,8 @@ programArgs parseProgramArguments(int argc, char* argv[]) {
     auto use_real_proc = result["real-proc"].as<bool>(); // must have default!
     auto base_env = result["base-env"].as<std::string>();
     args.prng_seed =
-        (static_cast<OptionValue1>(result["prng-seed"])).unwrap_or(0x1234);
+        (static_cast<OptionValue1>(result["prng-seed"]))
+            .unwrap_or<unsigned int>(0x1234);
 
     char* cwd = get_current_dir_name();
     string host_cwd(cwd);
