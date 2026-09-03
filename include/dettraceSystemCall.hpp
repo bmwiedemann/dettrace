@@ -540,6 +540,21 @@ public:
 };
 // =======================================================================================
 /**
+ * int getcpu(unsigned *cpu, unsigned *node, struct getcpu_cache *tcache);
+ * Always report cpu 0 on node 0, like the patched vDSO getcpu.
+ */
+class getcpuSystemCall {
+public:
+  static bool handleDetPre(
+      globalState& gs, state& s, ptracer& t, scheduler& sched);
+  static void handleDetPost(
+      globalState& gs, state& s, ptracer& t, scheduler& sched);
+
+  const int syscallNumber = SYS_getcpu;
+  const string syscallName = "getcpu";
+};
+// =======================================================================================
+/**
  * int getrlimit(int resource, struct rlimit *rlim);
  *
  *        The getrlimit() and setrlimit() system calls get and set resource

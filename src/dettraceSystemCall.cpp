@@ -933,6 +933,26 @@ void getpeernameSystemCall::handleDetPost(
   return;
 }
 // =======================================================================================
+bool getcpuSystemCall::handleDetPre(
+    globalState& gs, state& s, ptracer& t, scheduler& sched) {
+  return true;
+}
+
+void getcpuSystemCall::handleDetPost(
+    globalState& gs, state& s, ptracer& t, scheduler& sched) {
+  if (t.getReturnValue() != 0) {
+    return;
+  }
+  unsigned int zero = 0;
+  if (t.arg1() != 0) {
+    t.writeToTracee(traceePtr<unsigned int>((unsigned int*)t.arg1()), zero, s.traceePid);
+  }
+  if (t.arg2() != 0) {
+    t.writeToTracee(traceePtr<unsigned int>((unsigned int*)t.arg2()), zero, s.traceePid);
+  }
+  return;
+}
+// =======================================================================================
 bool getrandomSystemCall::handleDetPre(
     globalState& gs, state& s, ptracer& t, scheduler& sched) {
   return true;

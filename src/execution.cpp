@@ -1163,6 +1163,15 @@ bool execution::callPreHook(
   case SYS_seccomp:
       failSystemCall(gs, s, t, ENOSYS);
       return false;
+#ifdef SYS_rseq
+  // Pretend the kernel has no rseq support: glibc would otherwise answer
+  // sched_getcpu() from the rseq area with the real CPU number.
+  case SYS_rseq:
+      failSystemCall(gs, s, t, ENOSYS);
+      return false;
+#endif
+  case SYS_getcpu:
+    return getcpuSystemCall::handleDetPre(gs, s, t, sched);
 #ifdef SYS_riscv_hwprobe
   // Hide the hardware capabilities, callers fall back to defaults.
   case SYS_riscv_hwprobe:
@@ -1758,6 +1767,9 @@ void execution::callPostHook(
 
   case SYS_statx:
     return statxSystemCall::handleDetPost(gs, s, t, sched);
+
+  case SYS_getcpu:
+    return getcpuSystemCall::handleDetPost(gs, s, t, sched);
 
   case SYS_sysinfo:
     return sysinfoSystemCall::handleDetPost(gs, s, t, sched);

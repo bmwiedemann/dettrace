@@ -128,7 +128,13 @@ void seccomp::loadRules(bool debug, bool convertUids) {
   noIntercept(SYS_preadv2);
   noIntercept(SYS_pwritev);
   noIntercept(SYS_pwritev2);
-  noIntercept(SYS_rseq);
+  // glibc >= 2.35 registers rseq at startup and then answers sched_getcpu()
+  // from the rseq area, bypassing the patched vDSO getcpu and leaking the
+  // real CPU number. Fail it with ENOSYS, glibc silently falls back.
+  intercept(SYS_rseq);
+  // ... to the getcpu syscall (or the vDSO stub calling it), so make that
+  // deterministic as well.
+  intercept(SYS_getcpu);
 #endif
   noIntercept(SYS_listxattr);
   intercept(SYS_rt_sigprocmask);
