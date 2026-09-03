@@ -375,7 +375,12 @@ static int _dettrace_child_impl(const CloneArgs* clone_args) {
       close(fd);
     }
 
-    umount("/tmp");
+    // Only the tracee's tmpfs over /tmp in our own mount namespace; in
+    // the host's namespace (--host-mountns, --in-docker) this would
+    // unmount the real /tmp when running as root.
+    if (opts->clone_ns_flags & CLONE_NEWNS) {
+      umount("/tmp");
+    }
 
     unlink(devrandFifoPath);
     unlink(devUrandFifoPath);
