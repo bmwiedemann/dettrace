@@ -226,11 +226,14 @@ static int _dettrace_child(const CloneArgs* clone_args) {
     return _dettrace_child_impl(clone_args);
   } catch (std::runtime_error& e) {
     std::cerr << "Error: " << e.what() << "\n";
-    return 1;
   } catch (...) {
     std::cerr << "Error: Unknown exception occurred\n";
-    return 1;
   }
+  // Returning from a clone() child only exits its initial thread; the
+  // /dev/random threads would keep the process alive as a zombie leader
+  // and the parent's waitpid would never return. Exit the whole thread
+  // group; PTRACE_O_EXITKILL takes the tracees down with it.
+  _exit(1);
 }
 
 static int _dettrace_child_impl(const CloneArgs* clone_args) {
