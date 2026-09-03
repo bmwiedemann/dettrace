@@ -1598,18 +1598,18 @@ void pipe2SystemCall::handleDetPost(
 // with a struct timespec at arg5. The sigmask at arg6 is left alone.
 bool pselect6SystemCall::handleDetPre(
     globalState& gs, state& s, ptracer& t, scheduler& sched) {
-  if ((void*)t.arg2() != NULL) {
-    s.rdfsNotNull = true;
+  s.rdfsNotNull = (void*)t.arg2() != NULL;
+  if (s.rdfsNotNull) {
     s.origRdfs =
         t.readFromTracee(traceePtr<fd_set>((fd_set*)t.arg2()), t.getPid());
   }
-  if ((void*)t.arg3() != NULL) {
-    s.wrfsNotNull = true;
+  s.wrfsNotNull = (void*)t.arg3() != NULL;
+  if (s.wrfsNotNull) {
     s.origWrfs =
         t.readFromTracee(traceePtr<fd_set>((fd_set*)t.arg3()), t.getPid());
   }
-  if ((void*)t.arg4() != NULL) {
-    s.exfsNotNull = true;
+  s.exfsNotNull = (void*)t.arg4() != NULL;
+  if (s.exfsNotNull) {
     s.origExfs =
         t.readFromTracee(traceePtr<fd_set>((fd_set*)t.arg4()), t.getPid());
   }
@@ -1617,6 +1617,9 @@ bool pselect6SystemCall::handleDetPre(
   // Set the timeout to zero.
   struct timespec* timeoutPtr = (struct timespec*)t.arg5();
   s.originalArg5 = (uint64_t)timeoutPtr;
+  // Set either way: a stale true from an earlier call would make the
+  // post-hook return 0 for a NULL-timeout select instead of replaying.
+  s.userDefinedTimeout = timeoutPtr != nullptr;
   struct timespec ourTimeout = {0};
 
   if (timeoutPtr == nullptr) {
@@ -1689,7 +1692,9 @@ void pollSystemCall::handleDetPost(
 
   // Done, or the retry budget is used up: reset the retry state either
   // way, otherwise the next poll starts with a stale timeout and count.
-  if (retval > 0 || rptr.ptr == NULL || nfds == 0 || timeout == 0 ||
+  // Only 0 ("nothing ready") is ever replayed; an error such as EINTR is
+  // final too and must not leave the retry state behind.
+  if (retval != 0 || rptr.ptr == NULL || nfds == 0 || timeout == 0 ||
       s.poll_retry_count >= s.poll_retry_maximum) {
     s.originalArg3 = 0;
     s.poll_retry_count = 0;
@@ -1724,7 +1729,6 @@ bool ppollSystemCall::handleDetPre(
     }
   }
   s.originalArg3 = (uint64_t)timeoutPtr;
-  s.userDefinedTimeout = timeoutPtr != nullptr;
 
   // Point the call at a zero timeout in our scratch page, leaving the
   // tracee's (possibly read-only) struct untouched.
@@ -1742,7 +1746,7 @@ void ppollSystemCall::handleDetPost(
   auto rptr = traceePtr<struct pollfd>((struct pollfd*)t.arg1());
   int nfds = (int)t.arg2();
 
-  if (retval > 0 || rptr.ptr == NULL || nfds == 0 ||
+  if (retval != 0 || rptr.ptr == NULL || nfds == 0 ||
       s.poll_retry_count >= s.poll_retry_maximum) {
     s.originalArg3 = 0;
     s.poll_retry_count = 0;
@@ -2328,18 +2332,18 @@ bool selectSystemCall::handleDetPre(
     globalState& gs, state& s, ptracer& t, scheduler& sched) {
   // Get the original set structs.
   // Set them in the state class.
-  if ((void*)t.arg2() != NULL) {
-    s.rdfsNotNull = true;
+  s.rdfsNotNull = (void*)t.arg2() != NULL;
+  if (s.rdfsNotNull) {
     s.origRdfs =
         t.readFromTracee(traceePtr<fd_set>((fd_set*)t.arg2()), t.getPid());
   }
-  if ((void*)t.arg3() != NULL) {
-    s.wrfsNotNull = true;
+  s.wrfsNotNull = (void*)t.arg3() != NULL;
+  if (s.wrfsNotNull) {
     s.origWrfs =
         t.readFromTracee(traceePtr<fd_set>((fd_set*)t.arg3()), t.getPid());
   }
-  if ((void*)t.arg4() != NULL) {
-    s.exfsNotNull = true;
+  s.exfsNotNull = (void*)t.arg4() != NULL;
+  if (s.exfsNotNull) {
     s.origExfs =
         t.readFromTracee(traceePtr<fd_set>((fd_set*)t.arg4()), t.getPid());
   }
@@ -2347,6 +2351,7 @@ bool selectSystemCall::handleDetPre(
   // Set the timeout to zero.
   timeval* timeoutPtr = (timeval*)t.arg5();
   s.originalArg5 = (uint64_t)timeoutPtr;
+  s.userDefinedTimeout = timeoutPtr != nullptr;
   timeval ourTimeout = {0};
   ourTimeout.tv_sec = 0;
 
