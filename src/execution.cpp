@@ -522,7 +522,12 @@ int execution::runProgram() {
         break;
       case SYS_clone: {
         msg = "clone";
+#if defined(__s390x__)
+        // s390 passes the child stack first (CLONE_BACKWARDS2).
+        unsigned long flags = (unsigned long)tracer.arg2();
+#else
         unsigned long flags = (unsigned long)tracer.arg1();
+#endif
         isThread = (flags & CLONE_THREAD) != 0;
         // if((flags & CLONE_FILES) != 0){
         // runtimeError("We do not support CLONE_FILES\n");
