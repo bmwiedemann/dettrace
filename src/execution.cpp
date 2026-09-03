@@ -1183,6 +1183,7 @@ bool execution::callPreHook(
     return dupSystemCall::handleDetPre(gs, s, t, sched);
 
   case SYS_dup2:
+  case SYS_dup3:
     return dup2SystemCall::handleDetPre(gs, s, t, sched);
 
   case SYS_exit_group:
@@ -1547,6 +1548,7 @@ void execution::callPostHook(
     return dupSystemCall::handleDetPost(gs, s, t, sched);
 
   case SYS_dup2:
+  case SYS_dup3:
     return dup2SystemCall::handleDetPost(gs, s, t, sched);
 
   case SYS_epoll_ctl:

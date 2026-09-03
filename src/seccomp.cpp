@@ -53,7 +53,9 @@ void seccomp::loadRules(bool debug, bool convertUids) {
   // splice above. Used by coreutils >= 9.0 cat.
   noIntercept(SYS_copy_file_range);
 #endif
-  noIntercept(SYS_dup3);
+  // glibc implements dup2() with dup3() where the former does not exist
+  // (aarch64, riscv64); same fd bookkeeping as dup2.
+  intercept(SYS_dup3);
   noIntercept(SYS_capget);
   noIntercept(SYS_capset);
 
