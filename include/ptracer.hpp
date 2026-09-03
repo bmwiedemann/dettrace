@@ -99,11 +99,12 @@ const size_t syscallInsnSize = 4;
    below expect (with psw, gprs and orig_gpr2). */
 #include <asm/ptrace.h>
 /* Syscall arguments live in gprs[2..7] and gprs[2] also receives the
-   return value; the kernel preserves the original first argument in
-   orig_gpr2 (see ptracer::arg1). The number of the syscall being
-   executed is not part of the register set, it is read and written
-   through the NT_S390_SYSTEM_CALL regset. REG_SYSNUM refers to r1,
-   which is what a freshly executed "svc 0" instruction uses. */
+   return value; the kernel takes the first argument from orig_gpr2,
+   where it preserves it at entry (see ptracer::arg1, writeArg1). At a
+   syscall stop gprs[2] doubles as the number of the system call to
+   execute (see ptracer::changeSystemCall), which is otherwise not part
+   of the register set. REG_SYSNUM refers to r1, which is what a freshly
+   executed "svc 0" instruction uses. */
 #define REG_SYSNUM(r) ((r).gprs[1])
 #define REG_RETVAL(r) ((r).gprs[2])
 #define REG_ARG1(r) ((r).gprs[2])
@@ -114,7 +115,7 @@ const size_t syscallInsnSize = 4;
 #define REG_ARG6(r) ((r).gprs[7])
 #define REG_IP(r) ((r).psw.addr)
 #define REG_SP(r) ((r).gprs[15])
-/* gprs[2] is the return register and is preset to -ENOSYS at the
+/* gprs[2] is the return register and holds the syscall number at the
    seccomp-trace stop; orig_gpr2 keeps the original first argument. */
 #define REG_ORIG_ARG1(r) ((r).orig_gpr2)
 const size_t syscallInsnSize = 2;
@@ -487,12 +488,12 @@ public:
    */
   static void writeRegisters(pid_t pid, struct user_regs_struct& regs);
 
-#if defined(__aarch64__) || defined(__s390x__)
+#if defined(__aarch64__)
   /**
    * Set the system call the kernel executes for the current syscall stop.
    * Everywhere else this is part of the register set (orig_rax, gpr[0],
-   * a7); on aarch64 and s390x it must be written separately through the
-   * NT_ARM_SYSTEM_CALL / NT_S390_SYSTEM_CALL regset.
+   * a7, gprs[2] on s390x); on aarch64 it must be written separately
+   * through the NT_ARM_SYSTEM_CALL regset.
    */
   static void writeSyscallNumber(pid_t pid, long val);
 #endif

@@ -64,6 +64,9 @@ void ptracer::restoreSyscallArgs(const uint64_t in[6]) {
 }
 
 void ptracer::writeSyscallArgsToRegs() {
+  // Only used at the exit stop right before re-executing the syscall
+  // instruction, so on s390 gprs[2] must hold the first argument the
+  // tracee will pass again, not the syscall number (see writeArg1).
   REG_ORIG_ARG1(regs) = syscallArgs[0];
   REG_ARG1(regs) = syscallArgs[0];
   REG_ARG2(regs) = syscallArgs[1];
@@ -108,17 +111,13 @@ void ptracer::writeRegisters(pid_t pid, struct user_regs_struct& regs) {
 #endif
 }
 
-#if defined(__aarch64__) || defined(__s390x__)
-void ptracer::writeSyscallNumber(pid_t pid, long val) {
 #if defined(__aarch64__)
-  const int regset = NT_ARM_SYSTEM_CALL;
-#else
-  const int regset = NT_S390_SYSTEM_CALL;
-#endif
+void ptracer::writeSyscallNumber(pid_t pid, long val) {
   int sysnum = (int)val;
   struct iovec iov = {&sysnum, sizeof(sysnum)};
   doPtrace(
-      (enum __ptrace_request)PTRACE_SETREGSET, pid, (void*)(long)regset, &iov);
+      (enum __ptrace_request)PTRACE_SETREGSET, pid,
+      (void*)(long)NT_ARM_SYSTEM_CALL, &iov);
 }
 #endif
 
@@ -263,14 +262,23 @@ void ptracer::changeSystemCall(uint64_t val) {
 #if defined(__x86_64__)
   regs.orig_rax = val;
   regs.rax = val;
+#elif defined(__s390x__)
+  // At a syscall stop the kernel takes the number of the system call to
+  // execute from gprs[2]: __poke_user (arch/s390/kernel/ptrace.c) rewrites
+  // the low 16 bits of int_code from every write of that register while
+  // PIF_SYSCALL is set. So the number has to go there; r1 as well, so that
+  // a replayed "svc 0" (which reads its number from r1) picks it up when
+  // the instruction is re-executed. The NT_S390_SYSTEM_CALL regset is not
+  // consulted at syscall stops, only at signal stops for restart handling.
+  regs.gprs[1] = val;
+  regs.gprs[2] = val;
 #else
   REG_SYSNUM(regs) = val;
 #endif
   writeRegisters(traceePid, regs);
-#if defined(__aarch64__) || defined(__s390x__)
-  // Writing the syscall number register does not change which system call
-  // the kernel executes for the current syscall stop here, that takes a
-  // dedicated regset write.
+#if defined(__aarch64__)
+  // Writing x8 does not change which system call the kernel executes for
+  // the current syscall stop, that takes a dedicated regset write.
   writeSyscallNumber(traceePid, (long)val);
 #endif
 #if defined(__s390x__)
@@ -280,8 +288,16 @@ void ptracer::changeSystemCall(uint64_t val) {
 }
 
 void ptracer::writeArg1(uint64_t val) {
+#if defined(__s390x__)
+  // The kernel passes the first argument to the handler from orig_gpr2.
+  // Leave gprs[2] alone: at the entry stop it carries the syscall number,
+  // and writing it would make the low 16 bits of the argument the number
+  // of the system call that executes (see changeSystemCall).
+  regs.orig_gpr2 = val;
+#else
   REG_ORIG_ARG1(regs) = val;
   REG_ARG1(regs) = val;
+#endif
   syscallArgs[0] = val;
   writeRegisters(traceePid, regs);
 }
