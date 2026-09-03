@@ -396,20 +396,19 @@ static void epoll_log_event(globalState& gs, ptracer& t) {
   int epoll_fd = (int)t.arg1();
   int maxevents = min(t.getReturnValue(), (int)t.arg3());
 
-  const int size = 8192;
-  char buffer[8192], *p = buffer;
-  int n = 0;
-
-  p += snprintf(p + n, size - n, "epoll_wait(%u, [", epoll_fd);
+  string out = "epoll_wait(" + to_string(epoll_fd) + ", [";
   for (int i = 0; i < maxevents; i++) {
     auto rptr =
         traceePtr<struct epoll_event>((struct epoll_event*)t.arg2() + i);
     struct epoll_event ev = t.readFromTracee(rptr, t.getPid());
-    p += snprintf(
-        p + n, size - n, " (%s, %lu)", epoll_op(ev.events), ev.data.u64);
+    char item[64];
+    snprintf(
+        item, sizeof(item), " (%s, %lu)", epoll_op(ev.events),
+        (unsigned long)ev.data.u64);
+    out += item;
   }
-  snprintf(p + n, size - n, "]\n");
-  gs.log.writeToLogNoFormat(Importance::extra, buffer);
+  out += "]\n";
+  gs.log.writeToLogNoFormat(Importance::extra, out);
 }
 
 // =======================================================================================
