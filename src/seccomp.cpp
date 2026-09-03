@@ -389,6 +389,18 @@ void seccomp::loadRules(bool debug, bool convertUids) {
   // TODO: we may need to determinize MEMBARRIER_CMD_QUERY
   noIntercept(SYS_membarrier);
 
+  // Signals within the container are the tracee's own business, like
+  // tgkill above.
+  noIntercept(SYS_kill);
+  noIntercept(SYS_tkill);
+  // Like read, but glibc only uses it for explicit readv calls.
+  noIntercept(SYS_readv);
+#ifdef SYS_fchmodat2
+  // glibc >= 2.39 uses it for fchmodat(AT_SYMLINK_NOFOLLOW) and lchmod;
+  // same status as fchmodat above.
+  noIntercept(SYS_fchmodat2);
+#endif
+
   // noIntercept(SYS_shmget);
   // noIntercept(SYS_shmat);
   // noIntercept(SYS_shmdt);
