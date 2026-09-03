@@ -216,7 +216,24 @@ static pid_t _dettrace(const TraceOptions* opts) {
   return child;
 }
 
+static int _dettrace_child_impl(const CloneArgs* clone_args);
+
+// Entry point of the clone()d tracer process. Catch here what the
+// try/catch in dettrace() cannot: an exception escaping the clone child
+// would terminate() it with SIGABRT and a core dump.
 static int _dettrace_child(const CloneArgs* clone_args) {
+  try {
+    return _dettrace_child_impl(clone_args);
+  } catch (std::runtime_error& e) {
+    std::cerr << "Error: " << e.what() << "\n";
+    return 1;
+  } catch (...) {
+    std::cerr << "Error: Unknown exception occurred\n";
+    return 1;
+  }
+}
+
+static int _dettrace_child_impl(const CloneArgs* clone_args) {
   if (!clone_args || !clone_args->opts) {
     return 1;
   }
@@ -365,11 +382,19 @@ static int _dettrace_child(const CloneArgs* clone_args) {
 
     return exit_code;
   } else if (pid == 0) {
-    int ready = 0;
-    doWithCheck(
-        read(pipefds[0], &ready, sizeof(int)), "spawnTracerTracee, pipe read");
-    VERIFY(ready == 1);
-    return runTracee(*opts, devrandFifoPath, devUrandFifoPath);
+    // Report errors here: an exception escaping the forked tracee would
+    // terminate() it, and the tracer then only sees "No such process".
+    try {
+      int ready = 0;
+      doWithCheck(
+          read(pipefds[0], &ready, sizeof(int)),
+          "spawnTracerTracee, pipe read");
+      VERIFY(ready == 1);
+      return runTracee(*opts, devrandFifoPath, devUrandFifoPath);
+    } catch (std::runtime_error& e) {
+      std::cerr << "Error in tracee: " << e.what() << "\n";
+      _exit(1);
+    }
   }
 
   return -1;
