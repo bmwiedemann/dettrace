@@ -1568,13 +1568,77 @@ void pipe2SystemCall::handleDetPost(
   }
 }
 // =======================================================================================
+// This is what glibc's select() is on every 64-bit architecture since
+// 2.32 (and the only form on aarch64/riscv64); same treatment as select,
+// with a struct timespec at arg5. The sigmask at arg6 is left alone.
 bool pselect6SystemCall::handleDetPre(
     globalState& gs, state& s, ptracer& t, scheduler& sched) {
+  if ((void*)t.arg2() != NULL) {
+    s.rdfsNotNull = true;
+    s.origRdfs =
+        t.readFromTracee(traceePtr<fd_set>((fd_set*)t.arg2()), t.getPid());
+  }
+  if ((void*)t.arg3() != NULL) {
+    s.wrfsNotNull = true;
+    s.origWrfs =
+        t.readFromTracee(traceePtr<fd_set>((fd_set*)t.arg3()), t.getPid());
+  }
+  if ((void*)t.arg4() != NULL) {
+    s.exfsNotNull = true;
+    s.origExfs =
+        t.readFromTracee(traceePtr<fd_set>((fd_set*)t.arg4()), t.getPid());
+  }
+
+  // Set the timeout to zero.
+  struct timespec* timeoutPtr = (struct timespec*)t.arg5();
+  s.originalArg5 = (uint64_t)timeoutPtr;
+  struct timespec ourTimeout = {0};
+
+  if (timeoutPtr == nullptr) {
+    // Has to be created in memory.
+    struct timespec* newAddr = (struct timespec*)s.mmapMemory.getAddr().ptr;
+    t.writeToTracee(
+        traceePtr<struct timespec>(newAddr), ourTimeout, s.traceePid);
+    t.writeArg5((uint64_t)newAddr);
+  } else {
+    t.writeToTracee(
+        traceePtr<struct timespec>(timeoutPtr), ourTimeout, s.traceePid);
+    s.userDefinedTimeout = true;
+  }
+
   return true;
 }
 
 void pselect6SystemCall::handleDetPost(
     globalState& gs, state& s, ptracer& t, scheduler& sched) {
+  if (s.userDefinedTimeout) {
+    s.userDefinedTimeout = false;
+    if (t.getReturnValue() == 0) {
+      // See selectSystemCall::handleDetPost.
+      sched.preemptAndScheduleNext();
+    }
+  } else {
+    bool replayed = replaySyscallIfBlocked(gs, s, t, sched, 0);
+
+    if (replayed) {
+      if (s.rdfsNotNull) {
+        t.writeToTracee(
+            traceePtr<fd_set>((fd_set*)t.arg2()), s.origRdfs, t.getPid());
+      }
+      if (s.wrfsNotNull) {
+        t.writeToTracee(
+            traceePtr<fd_set>((fd_set*)t.arg3()), s.origWrfs, t.getPid());
+      }
+      if (s.exfsNotNull) {
+        t.writeToTracee(
+            traceePtr<fd_set>((fd_set*)t.arg4()), s.origExfs, t.getPid());
+      }
+      s.rdfsNotNull = false;
+      s.wrfsNotNull = false;
+      s.exfsNotNull = false;
+      t.writeArg5((uint64_t)s.originalArg5);
+    }
+  }
   return;
 }
 // =======================================================================================
