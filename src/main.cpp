@@ -39,7 +39,10 @@ struct MountPoint {
   string source;
   string target;
   string fstype;
-  unsigned long flags = MS_BIND;
+  // Recursive: inside the new mount namespace every submount of the
+  // source is locked, and the kernel refuses a non-recursive bind of a
+  // tree with locked children (EINVAL).
+  unsigned long flags = MS_BIND | MS_REC;
   string data;
   bool is_valid(void) const { return !source.empty() && !target.empty(); }
 };
