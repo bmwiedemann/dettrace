@@ -137,14 +137,15 @@ static const unsigned char __vdso_clock_getres[] = {
   , 0x67, 0x80, 0x00, 0x00                       // ret
   , 0x13, 0x00, 0x00, 0x00 };                    // nop
 
-// returns cpu 0, node 0, like the x86_64 __vdso_getcpu
+// The kernel's own __vdso_getcpu is just "li a7, 168; ecall; ret" (10 or
+// 12 bytes, so 16 with padding), too small for a stub that stores the
+// zeros itself. Call the intercepted getcpu syscall instead, its
+// post-hook reports cpu 0, node 0.
 static const unsigned char __vdso_getcpu[] = {
-    0x63, 0x04, 0x05, 0x00                       // beqz a0, . + 8
-  , 0x23, 0x20, 0x05, 0x00                       // sw zero, 0(a0)
-  , 0x63, 0x84, 0x05, 0x00                       // beqz a1, . + 8
-  , 0x23, 0xa0, 0x05, 0x00                       // sw zero, 0(a1)
-  , 0x13, 0x05, 0x00, 0x00                       // li a0, 0
-  , 0x67, 0x80, 0x00, 0x00 };                    // ret
+    0x93, 0x08, 0x80, 0x0a                       // li a7, 168 (SYS_getcpu)
+  , 0x73, 0x00, 0x00, 0x00                       // ecall
+  , 0x67, 0x80, 0x00, 0x00                       // ret
+  , 0x13, 0x00, 0x00, 0x00 };                    // nop
 
 // See the x86_64 __vdso_getrandom above: force the fallback to the
 // intercepted getrandom syscall.
