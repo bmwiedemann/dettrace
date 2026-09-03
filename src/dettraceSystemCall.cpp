@@ -3558,6 +3558,9 @@ bool accept4SystemCall::handleDetPre(
   auto it = s.fdStatus.get()->find(fd);
   if (it != s.fdStatus.get()->end()) {
     if (it->second == descriptorType::nonBlocking) {
+      // Truly non-blocking: EAGAIN must reach the tracee. Do not let a
+      // flag left behind by poll/ppoll/rt_sigtimedwait replay it.
+      s.userDefinedTimeout = false;
       return true;
     }
   }
@@ -3599,8 +3602,8 @@ void accept4SystemCall::handleDetPost(
       sched.preemptAndScheduleNext();
       replaySystemCall(gs, t, t.getSystemCallNumber());
     }
+    // arg4 is never modified by the pre-hook, nothing to restore.
     s.userDefinedTimeout = false;
-    t.writeArg4(s.originalArg4);
   }
   return;
 }
