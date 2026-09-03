@@ -741,6 +741,22 @@ public:
 };
 // =======================================================================================
 /**
+ * int clock_nanosleep(clockid_t clockid, int flags,
+ *                     const struct timespec *request,
+ *                     struct timespec *remain);
+ * What glibc's nanosleep/sleep/usleep are since 2.31. Like nanosleep, do not
+ * wait at all, but the request is arg3 here (arg1 is the clock id).
+ */
+class clock_nanosleepSystemCall {
+public:
+  static bool handleDetPre(
+      globalState& gs, state& s, ptracer& t, scheduler& sched);
+
+  const int syscallNumber = SYS_clock_nanosleep;
+  const string syscallName = "clock_nanosleep";
+};
+// =======================================================================================
+/**
  *
  * int mkdir(const char *pathname, mode_t mode);
  *

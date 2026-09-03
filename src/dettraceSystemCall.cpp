@@ -1288,6 +1288,22 @@ void nanosleepSystemCall::handleDetPost(
   runtimeError("nanosleep post-hook should never be called.");
 }
 // =======================================================================================
+bool clock_nanosleepSystemCall::handleDetPre(
+    globalState& gs, state& s, ptracer& t, scheduler& sched) {
+  struct timespec* req = (struct timespec*)t.arg3();
+  if (req != nullptr) {
+    struct timespec* myReq = (timespec*)s.mmapMemory.getAddr().ptr;
+    struct timespec localReq = {0};
+
+    t.writeToTracee(traceePtr<struct timespec>(myReq), localReq, s.traceePid);
+    t.writeArg3((uint64_t)myReq);
+    // A zero request only returns at once when it is relative; drop
+    // TIMER_ABSTIME, an absolute zero would wait until the epoch.
+    t.writeArg2(0);
+  }
+  return false;
+}
+// =======================================================================================
 bool mkdirSystemCall::handleDetPre(
     globalState& gs, state& s, ptracer& t, scheduler& sched) {
   printInfoString(t.arg1(), gs.log, s.traceePid, t);
