@@ -586,7 +586,7 @@ programArgs parseProgramArguments(int argc, char* argv[]) {
             .unwrap_or(false);
     args.debugLevel = (static_cast<OptionValue1>(result["debug"])).unwrap_or(0);
     args.useColor =
-        (static_cast<OptionValue1>(result["with-color"])).unwrap_or(false);
+        (static_cast<OptionValue1>(result["with-color"])).unwrap_or(true);
     args.logFile =
         (static_cast<OptionValue1>(result["log-file"])).unwrap_or(emptyString);
     args.printStatistics =
