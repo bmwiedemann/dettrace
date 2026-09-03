@@ -3402,7 +3402,22 @@ void waitidSystemCall::handleDetPost(
     globalState& gs, state& s, ptracer& t, scheduler& sched) {
   if (s.wait4Blocking) {
     gs.log.writeToLog(Importance::info, "Blocking waitid found\n");
-    replaySyscallIfBlocked(gs, s, t, sched, 0);
+    // waitid returns 0 both when it reaped a child and when WNOHANG found
+    // nothing; in the latter case the kernel leaves si_pid at 0.
+    bool blocked = t.getReturnValue() == 0;
+    siginfo_t* infop = (siginfo_t*)t.arg3();
+    if (blocked && infop != nullptr) {
+      siginfo_t info =
+          t.readFromTracee(traceePtr<siginfo_t>(infop), s.traceePid);
+      blocked = info.si_pid == 0;
+    }
+    if (blocked) {
+      gs.log.writeToLog(
+          Importance::info, "System call would have blocked! Replaying\n");
+      gs.replayDueToBlocking++;
+      sched.preemptAndScheduleNext();
+      replaySystemCall(gs, t, t.getSystemCallNumber());
+    }
   } else {
     gs.log.writeToLog(Importance::info, "Non-blocking waitid found\n");
     preemptIfBlocked(gs, s, t, sched, EAGAIN);
