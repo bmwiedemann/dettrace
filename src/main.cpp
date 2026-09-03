@@ -758,7 +758,7 @@ programArgs parseProgramArguments(int argc, char* argv[]) {
       // Treat current environment as our chroot.
       args.pathToChroot = "/";
     }
-  } catch (cxxopts::option_not_exists_exception& e) {
+  } catch (cxxopts::OptionException& e) {
     std::cerr << "command line parsing exception: " << e.what() << std::endl;
     std::cerr << options.help() << std::endl;
     exit(1);
