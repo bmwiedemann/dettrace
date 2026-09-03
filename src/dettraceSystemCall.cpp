@@ -2761,8 +2761,9 @@ bool timer_createSystemCall::handleDetPre(
 
   // write timerid into tracee memory
   gs.log.writeToLog(Importance::info, "writing timerid to %p\n", t.arg3());
-  t.writeToTracee(
-      traceePtr<uint64_t>((uint64_t*)t.arg3()), timerid, s.traceePid);
+  // The kernel's timer_t is an int (glibc passes the address of an int
+  // local), so write exactly four bytes.
+  t.writeToTracee(traceePtr<int>((int*)t.arg3()), (int)timerid, s.traceePid);
 
   // convert timer_create() into nop
   replaceSystemCallWithNoop(gs, s, t);
