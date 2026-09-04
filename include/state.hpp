@@ -137,6 +137,12 @@ public:
    */
   bool wait4Blocking = false;
 
+  /**
+   * waitid was called with a NULL infop and we pointed it at our scratch
+   * page to be able to tell "reaped" from "nothing yet" (both return 0).
+   */
+  bool waitidInfopRedirected = false;
+
   /*
    * Per process bool to know if this is the pre or post hook event as ptrace
    * does not track this for us. Only used for older kernel vesions.

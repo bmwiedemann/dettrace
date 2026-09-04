@@ -3437,6 +3437,12 @@ bool waitidSystemCall::handleDetPre(
   // Make this a non blocking hang!
   s.originalArg4 = t.arg4();
   t.writeArg4(s.originalArg4 | WNOHANG);
+  // With WNOHANG a 0 return means either "reaped" or "nothing yet"; only
+  // si_pid tells them apart, so make sure there is an infop to look at.
+  s.waitidInfopRedirected = t.arg3() == 0;
+  if (s.waitidInfopRedirected) {
+    t.writeArg3((uint64_t)s.mmapMemory.getAddr().ptr);
+  }
   return true;
 }
 void waitidSystemCall::handleDetPost(
@@ -3465,6 +3471,10 @@ void waitidSystemCall::handleDetPost(
   }
   // Reset.
   t.writeArg4(s.originalArg4);
+  if (s.waitidInfopRedirected) {
+    t.writeArg3(0);
+    s.waitidInfopRedirected = false;
+  }
 
   return;
 }
