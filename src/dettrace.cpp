@@ -63,10 +63,19 @@ extern "C" pid_t dettrace(const TraceOptions* opts) {
 static execution* globalExeObject = nullptr;
 
 void sigalrmHandler(int _) {
-  VERIFY(nullptr != globalExeObject);
-  globalExeObject->killAllProcesses();
-  // TODO: print out message about timeout expiring
-  runtimeError("dettrace timeout expired\n");
+  // Async-signal context, possibly on one of the /dev/random threads:
+  // throwing here is undefined behaviour (and terminate()s when the
+  // signal lands on a thread without a handler frame to unwind to).
+  // Use only write() and _exit(); PTRACE_O_EXITKILL takes care of any
+  // tracee that kill() below did not reach.
+  if (nullptr != globalExeObject) {
+    globalExeObject->killAllProcesses();
+  }
+  static const char msg[] = "Error: dettrace timeout expired\n";
+  if (write(STDERR_FILENO, msg, sizeof(msg) - 1) < 0) {
+    // Nothing more to do about it.
+  }
+  _exit(1);
 }
 
 /**
