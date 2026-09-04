@@ -62,6 +62,25 @@ extern "C" pid_t dettrace(const TraceOptions* opts) {
 
 static execution* globalExeObject = nullptr;
 
+// The fifos backing /dev/random and /dev/urandom live in the host's /tmp.
+// File scope so the error exits below can unlink them; the templates are
+// filled in by _dettrace_child_impl.
+static char devrandFifoPath[] = "/tmp/dt-XXXXXX";
+static char devUrandFifoPath[] = "/tmp/dt-XXXXXX";
+// Whether the tracee mounts a tmpfs over /tmp: it shares our mount
+// namespace, so that hides the fifos from us until it is unmounted.
+static bool tmpMountedOver = false;
+
+static void unlinkFifos() {
+  // Only plain system calls here, this also runs from the SIGALRM
+  // handler. On an untouched template unlink is a harmless ENOENT.
+  if (tmpMountedOver) {
+    umount("/tmp");
+  }
+  unlink(devrandFifoPath);
+  unlink(devUrandFifoPath);
+}
+
 void sigalrmHandler(int _) {
   // Async-signal context, possibly on one of the /dev/random threads:
   // throwing here is undefined behaviour (and terminate()s when the
@@ -75,6 +94,7 @@ void sigalrmHandler(int _) {
   if (write(STDERR_FILENO, msg, sizeof(msg) - 1) < 0) {
     // Nothing more to do about it.
   }
+  unlinkFifos();
   _exit(1);
 }
 
@@ -242,6 +262,7 @@ static int _dettrace_child(const CloneArgs* clone_args) {
   // /dev/random threads would keep the process alive as a zombie leader
   // and the parent's waitpid would never return. Exit the whole thread
   // group; PTRACE_O_EXITKILL takes the tracees down with it.
+  unlinkFifos();
   _exit(1);
 }
 
@@ -278,10 +299,11 @@ static int _dettrace_child_impl(const CloneArgs* clone_args) {
 
   doWithCheck(pipe2(pipefds, O_CLOEXEC), "spawnTracerTracee pipe2 failed");
 
+  tmpMountedOver = (opts->clone_ns_flags & CLONE_NEWNS) != 0;
+
   // Create fifo files for /dev/random and /dev/urandom. We can't use the normal
   // C++ish way because we need to avoid any allocations before the `fork()`
   // happens.
-  char devrandFifoPath[] = "/tmp/dt-XXXXXX";
   {
     int fd =
         doWithCheck(mkstemp(devrandFifoPath), "failed to mkstemp devrand fifo");
@@ -291,7 +313,6 @@ static int _dettrace_child_impl(const CloneArgs* clone_args) {
     close(fd);
   }
 
-  char devUrandFifoPath[] = "/tmp/dt-XXXXXX";
   {
     int fd = doWithCheck(
         mkstemp(devUrandFifoPath), "failed to mkstemp devurand fifo");
@@ -390,12 +411,7 @@ static int _dettrace_child_impl(const CloneArgs* clone_args) {
     // Only the tracee's tmpfs over /tmp in our own mount namespace; in
     // the host's namespace (--host-mountns, --in-docker) this would
     // unmount the real /tmp when running as root.
-    if (opts->clone_ns_flags & CLONE_NEWNS) {
-      umount("/tmp");
-    }
-
-    unlink(devrandFifoPath);
-    unlink(devUrandFifoPath);
+    unlinkFifos();
 
     return exit_code;
   } else if (pid == 0) {
