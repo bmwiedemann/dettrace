@@ -8,7 +8,7 @@ Future dettrace releases will include additional features, particularly record-r
 
 ## Installation
 
-dettrace can be built from [source](https://github.com/dettrace/dettrace.git). Kernel 4.8+ is recommended, details on how to build can be found at project's [README](https://github.com/dettrace/dettrace/blob/master/README.md).
+dettrace can be built from [source](https://github.com/bmwiedemann/dettrace.git). Kernel 4.8+ is recommended, details on how to build can be found at project's [README](https://github.com/bmwiedeman/dettrace/blob/master/README.md).
 
 ## Basic Usage
 

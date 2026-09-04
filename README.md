@@ -34,13 +34,13 @@ reproducible container.
 
 ## Description
 
-The latest version of Dettrace can be found on GitHub at https://github.com/dettrace/dettrace.
+The latest version of Dettrace can be found on GitHub at https://github.com/bmwiedemann/dettrace.
 
 ### Hardware dependencies
-The Dettrace prototype currently only works for x86-64 Intel CPUs. While not strictly necessary, portability guarantees are strongest when the CPU supports intercepting certain nondeterministic CPU instructions, e.g., CPUID.
+The Dettrace prototype currently only works for x86-64, aarch64, ppc64le, s390x and maybe riscv64 archs. While not strictly necessary, portability guarantees are strongest when the CPU supports intercepting certain nondeterministic CPU instructions, e.g., CPUID.
 
 ### Software dependencies
-Dettrace works well with kernel versions 4.8 through 5.3 (only minor modifications should be necessary to allow Dettrace to work in newer kernel versions). Kernel version < 4.8 use a slower
+Dettrace works well with kernel versions 4.8 through 7.2 (only minor modifications should be necessary to allow Dettrace to work in newer kernel versions). Kernel version < 4.8 use a slower
 ptrace implementation (more details in publication) making overall execution of Dettrace slower. Kernel version >= 4.12 are required for OS support for CPUID interception. Currently Dettrace has a few dependencies:
 - libssl: Hashing implementation for bytes from read system call (Useful for debugging nondeterministic bytes read from pipe).
 - libseccomp: Helper library for finer-grained system call filtering using seccomp-bpf.
