@@ -16,6 +16,6 @@ int main(){
   printf("Node name: %s\n", buf.nodename);
   printf("Operating system release: %s\n", buf.release);
   printf("Operating system version: %s\n", buf.version);
-  printf("Hardware identifier: %s\n", buf.machine);
+  printf("NONPORTABLE Hardware identifier: %s\n", buf.machine);
 
 }

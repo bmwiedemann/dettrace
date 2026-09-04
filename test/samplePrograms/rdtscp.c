@@ -8,10 +8,10 @@ int main()
 
 
     i = __rdtscp(&ui);
-    printf("RDTSCP: %llu ticks\n", i);
+    printf("NONPORTABLE RDTSCP: %llu ticks\n", i);
     printf("TSC_AUX was %x\n", ui);
 
     i = __rdtscp(&ui);
-    printf("RDTSCP: %llu ticks\n", i);
+    printf("NONPORTABLE RDTSCP: %llu ticks\n", i);
     printf("TSC_AUX was %x\n", ui);
 }
