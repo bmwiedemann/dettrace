@@ -71,7 +71,7 @@ int main(void) {
       // NB: bytesRead is often partial but not EOF
       //assert(bytesRead == sizeof(readbuffer) || bytesRead == 0);
       for (int i = 0; i < bytesRead; i++) {
-        printf("%02x", readbuffer[i]);
+        printf("%02x", (unsigned char)readbuffer[i]); /* no ffffff.. for negative chars */
       }
       printf("\n");
     } while (0 != bytesRead); // EOF

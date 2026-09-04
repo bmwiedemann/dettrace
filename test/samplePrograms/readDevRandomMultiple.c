@@ -24,7 +24,7 @@ void readRand(char* path) {
   assert(sizeof(randomBuf) == bytesRead);
   close(fd);
   for(int i = 0; i < sizeof(randomBuf); i++){
-    printf("%d ", randomBuf[i]);
+    printf("%d ", (signed char)randomBuf[i]); /* char is unsigned on arm, ppc, s390 */
   }
   printf("\n");
 }

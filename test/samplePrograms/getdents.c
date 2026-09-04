@@ -33,7 +33,13 @@ main(int argc, char *argv[])
     handle_error("open");
 
   for ( ; ; ) {
+#ifdef SYS_getdents
     nread = syscall(SYS_getdents, fd, buf, BUF_SIZE);
+#else
+    /* No getdents on aarch64/riscv64; getdents64 has its own test. */
+    printf("getdents not available on this architecture\n");
+    return 0;
+#endif
     if (nread == -1)
       handle_error("getdents");
 

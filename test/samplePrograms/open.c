@@ -15,15 +15,23 @@ int withError(int returnCode, char* call);
 
 void print_bytes(char* p, int n) {
   for(int i=0; i < n; i++)
-    printf("%d ", p[i]);
+    printf("%d ", (signed char)p[i]);
   printf("\n");
 }
 
+/* The open syscall does not exist on aarch64 and riscv64; the mode was
+   also never passed before, which left it to whatever was in the register. */
+#ifdef SYS_open
+#define RAW_OPEN(path, flags) syscall(SYS_open, path, flags, 0644)
+#else
+#define RAW_OPEN(path, flags) syscall(SYS_openat, AT_FDCWD, path, flags, 0644)
+#endif
+
 int main(){
-  int fd1 = withError(syscall(SYS_open, "temp1.txt", O_CREAT|O_WRONLY|O_TRUNC),
+  int fd1 = withError(RAW_OPEN("temp1.txt", O_CREAT|O_WRONLY|O_TRUNC),
                      "open");
 
-  int fd2 = withError(syscall(SYS_open, "temp2.txt", O_CREAT|O_WRONLY|O_TRUNC),
+  int fd2 = withError(RAW_OPEN("temp2.txt", O_CREAT|O_WRONLY|O_TRUNC),
                      "open");
 
   struct stat stat1;

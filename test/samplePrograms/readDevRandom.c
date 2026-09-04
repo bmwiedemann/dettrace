@@ -26,7 +26,7 @@ int main(){
 
   read(fd, randomBuf, length);
   for(int i = 0; i < length; i++){
-    printf("%d ", randomBuf[i]);
+    printf("%d ", (signed char)randomBuf[i]); /* char is unsigned on arm, ppc, s390 */
   }
   printf("\n");
   return 0;

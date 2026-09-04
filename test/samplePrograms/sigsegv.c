@@ -7,7 +7,8 @@
 #include <inttypes.h>
 
 static void handler(int sig, siginfo_t *si, void *ctxt) {
-  printf("Received signal %d\n  valid siginfo_t fields: signo:%d errno:%d code:%d addr:%p\n",
+  // s390 reports the faulting page rather than the address, hence NONPORTABLE.
+  printf("Received signal %d\n  valid siginfo_t fields: signo:%d errno:%d code:%d\nNONPORTABLE   addr:%p\n",
          sig,
          si->si_signo, si->si_errno, si->si_code,si->si_addr);
   // TODO: re-enable these extra checks if we switch to a run-twice-and-compare-outputs model

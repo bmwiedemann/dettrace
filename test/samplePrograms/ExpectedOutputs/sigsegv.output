@@ -1,2 +1,3 @@
 Received signal 11
-  valid siginfo_t fields: signo:11 errno:0 code:1 addr:0x1
+  valid siginfo_t fields: signo:11 errno:0 code:1
+NONPORTABLE   addr:0x1
