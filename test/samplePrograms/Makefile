@@ -349,7 +349,13 @@ tgkill.ok: tgkill.bin
 
 exec-mkstemp.ok: exec-mkstemp.bin
 	@echo "   Testing $(basename $<)..."
-	@$(DETTRACE) ./exec-mkstemp.bin test > ActualOutputs/$(basename $<).output && $(DIFF_CMD) ActualOutputs/$(basename $<).output ExpectedOutputs/$(basename $<).output
+	@$(DETTRACE) ./exec-mkstemp.bin test < /dev/null > ActualOutputs/$(basename $<).output
+	@$(DETTRACE) ./exec-mkstemp.bin test < /dev/null > ActualOutputs/$(basename $<).output2
+	@$(DIFF_CMD) ActualOutputs/$(basename $<).output ActualOutputs/$(basename $<).output2 || \
+	  (echo "ERROR: NONDETERMINISM detected between runs 1 and 2."; exit 1)
+	@grep -v NONPORTABLE ActualOutputs/$(basename $<).output > ActualOutputs/$(basename $<).output.stripped
+	@grep -v NONPORTABLE ExpectedOutputs/$(basename $<).output > ActualOutputs/$(basename $<).expected.stripped
+	@$(DIFF_CMD) ActualOutputs/$(basename $<).output.stripped ActualOutputs/$(basename $<).expected.stripped
 
 shuf.ok:
 	@echo "   Testing shuf..."
