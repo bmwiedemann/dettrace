@@ -40,11 +40,15 @@ BROADWELL_BINARIES= $(addsuffix .bin,$(BROADWELL_ROOTS))
 RT_ROOTS= timer_create_default timer_create_sigvtalrm timer_gettime
 RT_BINARIES= $(addsuffix .bin,$(RT_ROOTS))
 
-# std::random_device uses rdrand, which dettrace only traps on x86.
+# std::random_device uses rdrand unless dettrace hides it through CPUID
+# faulting, which needs kernel support the CPU must expose (a KVM build VM
+# does not, cpuid_fault.c skips itself there for the same reason).
 CXX_ROOTS=
 ifeq ($(ARCH),x86_64)
 ifndef DETTRACE_NO_CPUID_INTERCEPTION
+ifeq ($(shell grep -qw cpuid_fault /proc/cpuinfo && echo 1),1)
 CXX_ROOTS=random_device
+endif
 endif
 endif
 CXX_BINARIES= $(addsuffix .bin,$(CXX_ROOTS))
@@ -127,7 +131,8 @@ setup:
 %.ok: %.sh setup
 	@echo "   Testing script $(basename $<)..."
 #       Redirect both stdout and stderr (danger?):
-	@$(DETTRACE) ./$< > ActualOutputs/$(basename $<).output 2>&1
+	@$(DETTRACE) ./$< > ActualOutputs/$(basename $<).output 2>&1 || \
+	  (echo "ERROR: script failed, its output:"; cat ActualOutputs/$(basename $<).output; exit 1)
 	@$(DIFF_CMD) ActualOutputs/$(basename $<).output ExpectedOutputs/$(basename $<).output
 
 # Linux utilities, which in general need to be run with apropriate flags and/or setup/teardown

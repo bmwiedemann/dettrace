@@ -32,7 +32,10 @@ int main(int argc, char* argv[])
   } else {
     char template[] ="/tmp/XXXXXXXX";
     int fd = mkstemp(template);
-    printf("creating %s.\n", template);
+    // See getRandom.c: deterministic, but the libc decides how much of the
+    // random stream is used up before us.
+    printf("NONPORTABLE creating %s.\n", template);
+    printf("template has %d random characters\n", 6);
     close(fd);
     unlink(template);
   }

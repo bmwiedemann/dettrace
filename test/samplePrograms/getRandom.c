@@ -22,10 +22,13 @@ int main(){
   }
 #endif
 
-  printf("Random: \"");
+  // The values are deterministic for a given libc, which consumes a
+  // libc-version dependent amount of the stream before main().
+  printf("NONPORTABLE Random: \"");
   for(int i = 0; i < length; i++){
     printf("%d ", randomBuf[i]);
   }
-  printf("\"");
+  printf("\"\n");
+  printf("getrandom returned %zd bytes\n", ret);
   return 0;
 }
