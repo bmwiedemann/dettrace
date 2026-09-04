@@ -14,7 +14,8 @@
  * of modification times for files in order to present a consistent view of
  * time.
  */
-using ModTimeMap = std::unordered_map<ino_t, logical_clock::time_point>;
+using ModTimeMap =
+    std::unordered_map<DevIno, logical_clock::time_point, DevInoHash>;
 
 /**
  * Class to hold global state shared among all processes, this includes the
@@ -30,7 +31,7 @@ public:
    */
   globalState(
       logger& log,
-      ValueMapper<ino_t, ino_t> inodeMap,
+      ValueMapper<DevIno, ino_t, DevInoHash> inodeMap,
       ModTimeMap mtimeMap,
       bool kernelPre4_12,
       unsigned prngSeed,
@@ -45,7 +46,7 @@ public:
   /**
    * Isomorphism between inodes and virtual inodes.
    */
-  ValueMapper<ino_t, ino_t> inodeMap;
+  ValueMapper<DevIno, ino_t, DevInoHash> inodeMap;
 
   /**
    * Tracker of modification times.

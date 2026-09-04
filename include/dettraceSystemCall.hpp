@@ -2216,7 +2216,9 @@ public:
 // our inodeMap.
 template <typename DirEntry>
 void virtualizeEntries(
-    vector<uint8_t>& entries, ValueMapper<ino_t, ino_t>& inodeMap) {
+    vector<uint8_t>& entries,
+    ValueMapper<DevIno, ino_t, DevInoHash>& inodeMap,
+    dev_t dev) {
   // Variable size data, we cannot "iterate" over the entries in the array.
   uint8_t* position = entries.data();
 
@@ -2230,7 +2232,7 @@ void virtualizeEntries(
     currentEntry->d_off = 0;
 
     // Virtualize our inode.
-    ino64_t inode = currentEntry->d_ino;
+    DevIno inode = {dev, (ino_t)currentEntry->d_ino};
     currentEntry->d_ino = !inodeMap.realValueExists(inode)
                               ? inodeMap.addRealValue(inode)
                               : inodeMap.getVirtualValue(inode);
@@ -2291,7 +2293,10 @@ void handleDents(globalState& gs, state& s, ptracer& t, scheduler& sched) {
 
     vector<uint8_t> filledVector =
         dirEntries.at(fd).getSortedEntries(traceeBufferSize);
-    virtualizeEntries<T>(filledVector, gs.inodeMap);
+    // The entries live on the listed directory's filesystem (a mount point
+    // among them is reported with its underlying inode by the kernel).
+    virtualizeEntries<T>(
+        filledVector, gs.inodeMap, readInodeFor(gs.log, t.getPid(), fd).dev);
 
     gs.log.writeToLog(
         Importance::info, "Returning %d bytes!\n", filledVector.size());

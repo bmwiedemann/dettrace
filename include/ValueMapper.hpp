@@ -1,16 +1,41 @@
 #ifndef VALUE_MAPPER_H
 #define VALUE_MAPPER_H
 
+#include <sys/types.h>
 #include <unordered_map>
 #include "logger.hpp"
 
 using namespace std;
 
 /**
+ * Identity of a file on the host: an inode number is only unique within
+ * one filesystem, so the maps are keyed on (device, inode). Otherwise the
+ * root of a tmpfs and a directory on the root filesystem with the same
+ * inode number got the same virtual inode, and e.g. rm refused to remove
+ * a directory because it looked like "/".
+ */
+struct DevIno {
+  dev_t dev;
+  ino_t ino;
+  bool operator==(const DevIno& o) const {
+    return dev == o.dev && ino == o.ino;
+  }
+};
+struct DevInoHash {
+  size_t operator()(const DevIno& k) const {
+    return std::hash<uint64_t>()((uint64_t)k.ino) ^
+           (std::hash<uint64_t>()((uint64_t)k.dev) * 0x9E3779B97F4A7C15ULL);
+  }
+};
+inline string to_string(const DevIno& k) {
+  return to_string(k.dev) + ":" + to_string(k.ino);
+}
+
+/**
  * Simple wrapper around std::map for virtualizing values like inodes.
  * Template parameter Virtual must be an integral type.
  */
-template <typename Real, typename Virtual>
+template <typename Real, typename Virtual, typename Hash = std::hash<Real>>
 class ValueMapper {
 protected:
   /**
@@ -19,7 +44,7 @@ protected:
    * C++ doesn't support that unless I use phantom types and wrapper classes...
    */
 
-  unordered_map<Real, Virtual>
+  unordered_map<Real, Virtual, Hash>
       realToVirtualValue; /**< A mapping from Real to Virtual. */
   Virtual freshValue; /**< Next available Virtual value to be added to map. */
   logger& myLogger; /**< A logger. */

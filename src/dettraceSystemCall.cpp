@@ -15,6 +15,7 @@
 #include <sys/select.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/sysmacros.h>
 #include <sys/syscall.h>
 #include <sys/timerfd.h>
 #include <sys/times.h>
@@ -1367,7 +1368,7 @@ void mkdirSystemCall::handleDetPost(
     string strPath =
         t.readTraceeCString(traceePtr<char>((char*)t.arg1()), s.traceePid);
     auto inode = inode_from_tracee(strPath, s.traceePid, gs.log, -1);
-    if (inode != -1UL) {
+    if (inode.ino != (ino_t)-1) {
       gs.mtimeMap[inode] = s.getLogicalTime();
       gs.inodeMap.addRealValue(inode);
       s.incrementTime();
@@ -1389,7 +1390,7 @@ void mkdiratSystemCall::handleDetPost(
   if (t.getReturnValue() == 0 && path != nullptr) {
     string strPath = t.readTraceeCString(traceePtr<char>(path), s.traceePid);
     auto inode = inode_from_tracee(strPath, s.traceePid, gs.log, t.arg1());
-    if (inode != -1UL) {
+    if (inode.ino != (ino_t)-1) {
       gs.mtimeMap[inode] = s.getLogicalTime();
       gs.inodeMap.addRealValue(inode);
       s.incrementTime();
@@ -2501,7 +2502,8 @@ void statxSystemCall::handleDetPost(
   mine.stx_dev_major = 0; // st_dev = 1
   mine.stx_dev_minor = 1;
 
-  ino_t realinode = theirs.stx_ino;
+  DevIno realinode = {
+      makedev(theirs.stx_dev_major, theirs.stx_dev_minor), theirs.stx_ino};
   const auto mtime = get_with_default(gs.mtimeMap, realinode, gs.epoch);
   const struct timespec epochTs = logical_clock::to_timespec(gs.epoch);
   const struct timespec mtimeTs = logical_clock::to_timespec(mtime);
@@ -2517,7 +2519,7 @@ void statxSystemCall::handleDetPost(
                      : gs.inodeMap.addRealValue(realinode);
   gs.log.writeToLog(
       Importance::info, "statx: realinode %lu -> %lu, mode 0%o, size %lu\n",
-      (unsigned long)realinode, (unsigned long)mine.stx_ino, mine.stx_mode,
+      (unsigned long)realinode.ino, (unsigned long)mine.stx_ino, mine.stx_mode,
       (unsigned long)mine.stx_size);
 
   t.writeToTracee(traceePtr<struct statx>(statxPtr), mine, s.traceePid);
@@ -2615,7 +2617,7 @@ void symlinkSystemCall::handleDetPost(
     string linkpath =
         t.readTraceeCString(traceePtr<char>((char*)t.arg2()), s.traceePid);
     auto inode = inode_from_tracee(linkpath, s.traceePid, gs.log, -1);
-    if (inode != -1UL) {
+    if (inode.ino != (ino_t)-1) {
       gs.mtimeMap[inode] = s.getLogicalTime();
       gs.inodeMap.addRealValue(inode);
       s.incrementTime();
@@ -2637,7 +2639,7 @@ void symlinkatSystemCall::handleDetPost(
     string linkpath =
         t.readTraceeCString(traceePtr<char>((char*)t.arg3()), s.traceePid);
     auto inode = inode_from_tracee(linkpath, s.traceePid, gs.log, t.arg2());
-    if (inode != -1UL) {
+    if (inode.ino != (ino_t)-1) {
       gs.mtimeMap[inode] = s.getLogicalTime();
       gs.inodeMap.addRealValue(inode);
       s.incrementTime();
@@ -2657,7 +2659,7 @@ void mknodSystemCall::handleDetPost(
     string path =
         t.readTraceeCString(traceePtr<char>((char*)t.arg1()), s.traceePid);
     auto inode = inode_from_tracee(path, s.traceePid, gs.log, -1);
-    if (inode != -1UL) {
+    if (inode.ino != (ino_t)-1) {
       gs.mtimeMap[inode] = s.getLogicalTime();
       gs.inodeMap.addRealValue(inode);
       s.incrementTime();
@@ -2677,7 +2679,7 @@ void mknodatSystemCall::handleDetPost(
     string path =
         t.readTraceeCString(traceePtr<char>((char*)t.arg2()), s.traceePid);
     auto inode = inode_from_tracee(path, s.traceePid, gs.log, t.arg1());
-    if (inode != -1UL) {
+    if (inode.ino != (ino_t)-1) {
       gs.mtimeMap[inode] = s.getLogicalTime();
       gs.inodeMap.addRealValue(inode);
       s.incrementTime();

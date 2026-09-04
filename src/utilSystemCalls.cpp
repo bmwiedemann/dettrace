@@ -130,10 +130,10 @@ void handleStatFamily(
     myStat.st_rdev = theirStat.st_rdev; // Audit this.
     myStat.st_size = theirStat.st_size;
 
-    ino_t realinode = theirStat.st_ino;
+    DevIno realinode = {theirStat.st_dev, theirStat.st_ino};
     gs.log.writeToLog(
-        Importance::extra, "(device,realinode) = (%lu,%lu)\n", theirStat.st_dev,
-        realinode);
+        Importance::extra, "(device,realinode) = (%lu,%lu)\n",
+        (unsigned long)realinode.dev, (unsigned long)realinode.ino);
     // Use inode to check if we created this file during our run.
     const auto mtime = get_with_default(gs.mtimeMap, realinode, gs.epoch);
 
@@ -318,8 +318,9 @@ bool tracee_file_exists(
   return false;
 }
 // =======================================================================================
-ino_t inode_from_tracee(
+DevIno inode_from_tracee(
     const string& traceePath, pid_t traceePid, logger& log, int traceeDirFd) {
+  const DevIno notFound = {0, (ino_t)-1};
   // Create full absolute path in the hostOS file system.
   string resolvedPath =
       resolve_tracee_path(traceePath, traceePid, log, traceeDirFd);
@@ -328,7 +329,7 @@ ino_t inode_from_tracee(
     log.writeToLog(
         Importance::info, string{"inode_from_tracee, cannot resolve "} +
                               traceePath + "for pid: " + to_string(traceePid));
-    return -1;
+    return notFound;
   }
 
   struct stat statbuf = {0};
@@ -340,7 +341,7 @@ ino_t inode_from_tracee(
         Importance::info, "Unable to stat file " + traceePath + " => " +
                               resolvedPath + " tracee, error: " +
                               strerror(errno) + " (" + to_string(errno) + ")");
-    return -1;
+    return notFound;
   }
 
   if (S_ISLNK(statbuf.st_mode)) {
@@ -353,10 +354,10 @@ ino_t inode_from_tracee(
       Importance::extra, "lstat(%s) returned inode: %d!\n",
       resolvedPath.c_str(), statbuf.st_ino);
 
-  return statbuf.st_ino;
+  return {statbuf.st_dev, statbuf.st_ino};
 }
 // =======================================================================================
-ino_t readInodeFor(logger& log, pid_t traceePid, int fd) {
+DevIno readInodeFor(logger& log, pid_t traceePid, int fd) {
   std::ostringstream ss;
   // read from /proc/$pid/fd/$fd
   ss << "/proc/" << traceePid << "/fd/" << fd;
@@ -377,7 +378,7 @@ ino_t readInodeFor(logger& log, pid_t traceePid, int fd) {
       Importance::extra, "stat(%s) returned inode: %d!\n", procPath.c_str(),
       statbuf.st_ino);
 
-  return statbuf.st_ino;
+  return {statbuf.st_dev, statbuf.st_ino};
 }
 // =======================================================================================
 bool sendTraceeSignalNow(

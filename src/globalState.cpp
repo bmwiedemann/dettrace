@@ -2,7 +2,7 @@
 
 globalState::globalState(
     logger& log,
-    ValueMapper<ino_t, ino_t> inodeMap,
+    ValueMapper<DevIno, ino_t, DevInoHash> inodeMap,
     ModTimeMap mtimeMap,
     bool kernelPre4_12,
     unsigned prngSeed,

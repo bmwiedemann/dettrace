@@ -87,7 +87,7 @@ execution::execution(
       tracer{startingPid},
       // Create our global state once, share across class.
       myGlobalState{
-          log,          ValueMapper<ino_t, ino_t>{log, "inode map", 1},
+          log,          ValueMapper<DevIno, ino_t, DevInoHash>{log, "inode map", 1},
           ModTimeMap{}, kernelCheck(4, 12, 0),
           prngSeed,     epoch,
           allow_network},

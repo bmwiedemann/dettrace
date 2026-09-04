@@ -81,7 +81,7 @@ void failSystemCall(globalState& gs, state& s, ptracer& t, int err);
  * fine, unless your path _is_ a symbolic link. You will end up derreferencing
  * too many symbolic links! Assumes that `fd` is currently open for traceePid.
  */
-ino_t readInodeFor(logger& log, pid_t traceePid, int fd);
+DevIno readInodeFor(logger& log, pid_t traceePid, int fd);
 
 /**
  * Takes care of resolution for a path relative to the tracee process.
@@ -91,7 +91,7 @@ ino_t readInodeFor(logger& log, pid_t traceePid, int fd);
  * value -1 as poor man's optional type NONE. Assumes that `traceeDirFd` is
  * currently open for traceePid.
  */
-ino_t inode_from_tracee(
+DevIno inode_from_tracee(
     const string& traceePath, pid_t traceePid, logger& log, int traceeDirFd);
 
 /**
