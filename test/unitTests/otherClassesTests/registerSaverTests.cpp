@@ -1,6 +1,6 @@
 #include "../catch.hpp"
-#include <sys/user.h>
-#include "../../../include/registerSaver.hpp"
+#include <string.h>
+#include "../../../include/registerSaver.hpp" /* brings in ptracer.hpp: struct user_regs_struct and REG_* per architecture */
 
 
 /**
@@ -31,11 +31,7 @@ TEST_CASE("registerSaver retrieves what is pushed correctly", "registerSaver"){
 
     struct user_regs_struct returned = rs.popRegisterState();
     
-    REQUIRE(original.r15 == returned.r15);
-    REQUIRE(original.r14 == returned.r14);
-    REQUIRE(original.r13 == returned.r13);
-    REQUIRE(original.rsp == returned.rsp);
-    REQUIRE(original.rip == returned.rip);
+    REQUIRE(memcmp(&original, &returned, sizeof(original)) == 0);
 
 
     SECTION("push -> pop -> push -> pop returnes correct state"){
@@ -44,11 +40,7 @@ TEST_CASE("registerSaver retrieves what is pushed correctly", "registerSaver"){
       
       struct user_regs_struct returned_second = rs.popRegisterState();
       
-      REQUIRE(second.r15 == returned_second.r15);
-      REQUIRE(second.r14 == returned_second.r14);
-      REQUIRE(second.r13 == returned_second.r13);
-      REQUIRE(second.rsp == returned_second.rsp);
-      REQUIRE(second.rip == returned_second.rip);
+      REQUIRE(memcmp(&second, &returned_second, sizeof(second)) == 0);
 
     }
 
@@ -63,13 +55,13 @@ TEST_CASE("registerSaver has a deep copy of values", "registerSaver"){
     struct user_regs_struct original = {0, 1, 2, 3, 4};
     rs.pushRegisterState(original);
 
-    original.rsp = 0xfff;
-    original.rip = 0x123;
+    REG_SP(original) = 0xfff;
+    REG_IP(original) = 0x123;
 
     struct user_regs_struct returned = rs.popRegisterState();
 
-    REQUIRE(original.rsp != returned.rsp);
-    REQUIRE(original.rip != returned.rip);
+    REQUIRE(REG_SP(original) != REG_SP(returned));
+    REQUIRE(REG_IP(original) != REG_IP(returned));
   }
 
   SECTION("returned struct does not point to original one"){

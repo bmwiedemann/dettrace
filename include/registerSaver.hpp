@@ -1,7 +1,7 @@
 #ifndef REGISTER_SAVER_H
 #define REGISTER_SAVER_H
 
-#include <sys/user.h>
+#include "ptracer.hpp" /* struct user_regs_struct on every architecture */
 using namespace std;
 /**
  * A register saver class that has the ability to save/retrieve a register

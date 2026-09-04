@@ -43,7 +43,9 @@ using namespace std;
 
 TEST_CASE("time system call", "time"){
   time_t tloc;
-  syscall(SYS_time, &tloc);
+  // The time syscall does not exist on aarch64 and 64-bit s390x; libc's
+  // time() ends up in the intercepted time or clock_gettime call.
+  time(&tloc);
   REQUIRE(744847200 == tloc);
 }
 
