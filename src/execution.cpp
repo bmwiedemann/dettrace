@@ -1172,6 +1172,10 @@ bool execution::callPreHook(
 #endif
   case SYS_getcpu:
     return getcpuSystemCall::handleDetPre(gs, s, t, sched);
+
+  case SYS_kill:
+  case SYS_tkill:
+    return killSystemCall::handleDetPre(gs, s, t, sched);
 #ifdef SYS_riscv_hwprobe
   // Hide the hardware capabilities, callers fall back to defaults.
   case SYS_riscv_hwprobe:
@@ -1770,6 +1774,10 @@ void execution::callPostHook(
 
   case SYS_getcpu:
     return getcpuSystemCall::handleDetPost(gs, s, t, sched);
+
+  case SYS_kill:
+  case SYS_tkill:
+    return killSystemCall::handleDetPost(gs, s, t, sched);
 
   case SYS_sysinfo:
     return sysinfoSystemCall::handleDetPost(gs, s, t, sched);

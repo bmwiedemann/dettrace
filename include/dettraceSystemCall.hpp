@@ -543,6 +543,26 @@ public:
  * int getcpu(unsigned *cpu, unsigned *node, struct getcpu_cache *tcache);
  * Always report cpu 0 on node 0, like the patched vDSO getcpu.
  */
+/**
+ * int kill(pid_t pid, int sig);
+ * int tkill(int tid, int sig);
+ * Only signals to a specific process (or thread) other than the tracer are
+ * let through. pid 0, -1 and -pgrp target the tracer (pid 1 of the
+ * namespace) and, through the shared process group, processes outside
+ * the container, e.g. the shell that started dettrace; those fail with
+ * EPERM. Note that tgkill is not restricted (abort() needs it).
+ */
+class killSystemCall {
+public:
+  static bool handleDetPre(
+      globalState& gs, state& s, ptracer& t, scheduler& sched);
+  static void handleDetPost(
+      globalState& gs, state& s, ptracer& t, scheduler& sched);
+
+  const int syscallNumber = SYS_kill;
+  const string syscallName = "kill";
+};
+// =======================================================================================
 class getcpuSystemCall {
 public:
   static bool handleDetPre(

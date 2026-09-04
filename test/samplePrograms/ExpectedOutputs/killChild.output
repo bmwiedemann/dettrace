@@ -1,0 +1,3 @@
+kill(child, SIGTERM) returned 0
+child terminated by signal 15
+kill(1, SIGTERM) returned -1: Operation not permitted

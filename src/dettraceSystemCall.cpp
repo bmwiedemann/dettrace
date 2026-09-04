@@ -933,6 +933,30 @@ void getpeernameSystemCall::handleDetPost(
   return;
 }
 // =======================================================================================
+bool killSystemCall::handleDetPre(
+    globalState& gs, state& s, ptracer& t, scheduler& sched) {
+  int pid = (int)t.arg1();
+  int signal = (int)t.arg2();
+  gs.log.writeToLog(
+      Importance::info, "kill/tkill(pid = %d, signal = %d)\n", pid, signal);
+
+  // getpid() here is the tracer as the tracee sees it: 1 in the pid
+  // namespace, the real pid with --host-pidns.
+  if (pid <= 0 || pid == getpid()) {
+    gs.log.writeToLog(
+        Importance::info,
+        "refusing signal to process group / tracer, returning EPERM\n");
+    failSystemCall(gs, s, t, EPERM);
+    return false;
+  }
+  return true;
+}
+
+void killSystemCall::handleDetPost(
+    globalState& gs, state& s, ptracer& t, scheduler& sched) {
+  return;
+}
+// =======================================================================================
 bool getcpuSystemCall::handleDetPre(
     globalState& gs, state& s, ptracer& t, scheduler& sched) {
   return true;

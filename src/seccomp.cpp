@@ -395,12 +395,19 @@ void seccomp::loadRules(bool debug, bool convertUids) {
   // TODO: we may need to determinize MEMBARRIER_CMD_QUERY
   noIntercept(SYS_membarrier);
 
-  // Signals within the container are the tracee's own business, like
-  // tgkill above.
-  noIntercept(SYS_kill);
-  noIntercept(SYS_tkill);
+  // Signals to other tracees are fine, but a process-group or broadcast
+  // kill(0/-1/-pgrp) reaches the tracer and processes outside the
+  // container, see killSystemCall.
+  intercept(SYS_kill);
+  intercept(SYS_tkill);
   // Like read, but glibc only uses it for explicit readv calls.
   noIntercept(SYS_readv);
+  // Used by more(1), systemd-style event loops etc. Reading a signalfd
+  // returns the signals dettrace delivers to the tracee, nothing else.
+#ifdef SYS_signalfd
+  noIntercept(SYS_signalfd);
+#endif
+  noIntercept(SYS_signalfd4);
 #ifdef SYS_fchmodat2
   // glibc >= 2.39 uses it for fchmodat(AT_SYMLINK_NOFOLLOW) and lchmod;
   // same status as fchmodat above.
