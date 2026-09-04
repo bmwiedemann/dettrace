@@ -1,0 +1,5 @@
+clock_nanosleep(MONOTONIC, 5s) = 0
+clock_nanosleep(REALTIME, 5s) = 0
+clock_nanosleep(REALTIME, +1h absolute) = 0
+nanosleep(5s) = 0
+sleep(5) = 0

@@ -1,0 +1,4 @@
+timer_create returned 0
+timer id 11000
+word behind the timer id intact: 1
+libc timer_create and timer_settime succeeded

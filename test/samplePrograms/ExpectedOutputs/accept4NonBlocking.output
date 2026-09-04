@@ -1,0 +1,2 @@
+poll(listening socket, 10ms) = 0
+accept4(nothing pending) = -1 Resource temporarily unavailable

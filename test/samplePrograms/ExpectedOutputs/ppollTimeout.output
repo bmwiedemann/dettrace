@@ -1,0 +1,4 @@
+ppoll(empty pipe, 0s) = 0
+ppoll(empty pipe, 100ms) = 0
+ppoll(ready pipe, no timeout) = 1, POLLIN 1
+caller timeout intact: 1

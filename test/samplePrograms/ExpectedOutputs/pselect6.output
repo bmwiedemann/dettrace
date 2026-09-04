@@ -1,0 +1,5 @@
+pselect(empty pipe, 0s) = 0, readable 0
+pselect(empty pipe, 100ms) = 0
+pselect(ready pipe, no timeout) = 1, readable 1
+pselect(pipe fed by child, no timeout) = 1
+child exited with 0

@@ -1,0 +1,8 @@
+statx returned 0
+path after statx: statx-testfile
+size 5 nlink 1 blksize 512 blocks 1
+dev 0:1 mode 0644 uid 0 gid 0
+atime 744847200 ctime 744847200 mtime 744847200.000000999
+NONPORTABLE ino 6
+ino is virtualized: 1
+fstat agrees with statx: 1

@@ -1,0 +1,7 @@
+dup3(pipe read end, 9) = 9
+dup3(fd, fd) = -1 Invalid argument
+dup3(.., O_CLOEXEC) = 10, FD_CLOEXEC set: 1
+read from the pipe duplicate: 5 "hello"
+child exited with 0
+dup3(timerfd, 11) = 11
+read from the timerfd duplicate: expired 1
