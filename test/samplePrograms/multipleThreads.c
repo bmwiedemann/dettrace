@@ -23,9 +23,10 @@ int main(){
 
   for(int i = 0; i < THREAD_COUNT; i++){
     tid[i] = i;
-    handle[i] = pthread_create(& handle[i], NULL, & threadFunction, (void*) & tid[i]);
-    if(handle[i] != 0){
-      handle_error_en(errno, "pthread create\n");
+    // Do not overwrite the handle with the return value, join needs it.
+    int rc = pthread_create(& handle[i], NULL, & threadFunction, (void*) & tid[i]);
+    if(rc != 0){
+      handle_error_en(rc, "pthread create\n");
     }
   }
 
