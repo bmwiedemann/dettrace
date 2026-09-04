@@ -732,30 +732,29 @@ void execution::disableVdso(pid_t pid) {
     for (auto func : vdsoFuncs) {
       const auto& sym = func;
       unsigned long target = vdsoMap.procMapBase + sym.offset;
-      // Only pad up to the symbol's own size (rounded up to whole words for
-      // PTRACE_POKETEXT). Rounding up to the section alignment can clobber
-      // the next symbol, e.g. __vdso_getrandom which starts 0x30 bytes after
-      // the 0x27 byte long __vdso_getcpu with a section alignment of 0x40.
-      unsigned long nbUpper = alignUp(sym.size, sizeof(long));
-      unsigned long nb = alignUp(sym.code_size, sizeof(long));
-      VERIFY(nb <= nbUpper);
-
-      for (auto i = 0; i < nb / sizeof(long); i++) {
-        uint64_t val;
-        const unsigned char* z = func.code;
-        unsigned long to = target + 8 * i;
-        memcpy(&val, &z[8 * i], sizeof(val));
-        ptracer::doPtrace(PTRACE_POKETEXT, pid, (void*)to, (void*)val);
+      // Write the stub, then poison the rest of the symbol, and never
+      // touch a byte past the symbol's own size: the next function can
+      // start right there (riscv64 links __vdso_flush_icache 4-aligned
+      // behind the 10 byte __vdso_getcpu, x86_64 has __vdso_getrandom
+      // 0x30 bytes after the 0x27 byte __vdso_getcpu). PTRACE_POKETEXT
+      // works on whole words, so merge the last one with what is there.
+      const size_t wordSize = sizeof(long);
+      VERIFY(sym.code_size <= alignUp(sym.size, wordSize));
+      const unsigned long poison = vdsoPoison;
+      for (unsigned long off = 0; off < sym.size; off += wordSize) {
+        unsigned char bytes[wordSize];
+        long word = ptracer::doPtrace(
+            PTRACE_PEEKTEXT, pid, (void*)(target + off), 0);
+        memcpy(bytes, &word, wordSize);
+        for (size_t b = 0; b < wordSize && off + b < sym.size; b++) {
+          unsigned long pos = off + b;
+          bytes[b] = pos < sym.code_size ? func.code[pos]
+                                         : ((const unsigned char*)&poison)[b];
+        }
+        memcpy(&word, bytes, wordSize);
+        ptracer::doPtrace(
+            PTRACE_POKETEXT, pid, (void*)(target + off), (void*)word);
       }
-
-      unsigned long off = target + nb;
-      unsigned long val = vdsoPoison;
-      while (nb < nbUpper) {
-        ptracer::doPtrace(PTRACE_POKETEXT, pid, (void*)off, (void*)val);
-        off += sizeof(long);
-        nb += sizeof(long);
-      }
-      VERIFY(nb == nbUpper);
     }
   }
 

@@ -137,15 +137,10 @@ static const unsigned char __vdso_clock_getres[] = {
   , 0x67, 0x80, 0x00, 0x00                       // ret
   , 0x13, 0x00, 0x00, 0x00 };                    // nop
 
-// The kernel's own __vdso_getcpu is just "li a7, 168; ecall; ret" (10 or
-// 12 bytes, so 16 with padding), too small for a stub that stores the
-// zeros itself. Call the intercepted getcpu syscall instead, its
-// post-hook reports cpu 0, node 0.
-static const unsigned char __vdso_getcpu[] = {
-    0x93, 0x08, 0x80, 0x0a                       // li a7, 168 (SYS_getcpu)
-  , 0x73, 0x00, 0x00, 0x00                       // ecall
-  , 0x67, 0x80, 0x00, 0x00                       // ret
-  , 0x13, 0x00, 0x00, 0x00 };                    // nop
+// No __vdso_getcpu replacement: the kernel's own is just "li a7, 168;
+// ecall; ret" (10 bytes with a compressed ret, __vdso_flush_icache
+// follows right behind it), i.e. the getcpu syscall, which is
+// intercepted and reports cpu 0, node 0.
 
 // See the x86_64 __vdso_getrandom above: force the fallback to the
 // intercepted getrandom syscall.
@@ -525,10 +520,6 @@ int proc_get_vdso_symbols(
         vdso[res].func = VDSO_gettimeofday;
         vdso[res].code_size = sizeof(__vdso_gettimeofday);
         vdso[res].code = (const unsigned char*)__vdso_gettimeofday;
-      } else if (strcmp("__vdso_getcpu", name) == 0) {
-        vdso[res].func = VDSO_getcpu;
-        vdso[res].code_size = sizeof(__vdso_getcpu);
-        vdso[res].code = (const unsigned char*)__vdso_getcpu;
       } else if (strcmp("__vdso_clock_getres", name) == 0) {
         vdso[res].func = VDSO_clock_getres;
         vdso[res].code_size = sizeof(__vdso_clock_getres);
