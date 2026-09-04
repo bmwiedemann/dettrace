@@ -1,5 +1,5 @@
 # binaries that are simple to build (1 source file, same name as binary)
-SIMPLE_ROOTS=simpleFork inverseFork nestedFork vfork clock_gettime getpid uname pipe getRandom waitOnChild fchownat forkAndPipe helloWorld 2writers1reader fuse-single-read fuse-single-write open openat creat  sigsegv sigill sigabrt kill alarm-handler alarm-nohandler alarm-ignore selectWithoutTimeout selectWithTimeout getdents getdents64 pollWithoutTimeout pollWithPositiveTimeout pollWithNegativeTimeout rdtsc rdtscp nanosleep nanosleep-par alarm-resethand readDevRandom readDevRandomMultiple readDevUrandom exec-mkstemp complex_mkdirat_dirfd mkdir mkdirat_fdcwd mknod mknod_fullpath open_already_exists openat_already_exists simpleCreat simple_mkdirat_dirfd symlink symlinkat vdso-funcs multithreaded multipleThreads processAndThread processThreadProcess processThreadThread pthreadJoin pthreadNoJoin ptpThreadJoin ptpThreadNoJoin twoPthreadsJoin twoPthreadsNoJoin tenThreadJoin tenThreadNoJoin exitgroup exitgroupMainProcess condvar-parent-wait condvar-thread-wait sigsuspend sigtimedwait-no-timeout sigtimedwait-timeout-0s sigtimedwait-timeout-1s timerfd1 cpuid_fault # confdir3 execveMainThread execveThreads open_tmpfile deadlockingPipe
+SIMPLE_ROOTS=simpleFork inverseFork nestedFork vfork clock_gettime getpid uname pipe getRandom waitOnChild fchownat forkAndPipe helloWorld 2writers1reader fuse-single-read fuse-single-write open openat creat  sigsegv sigill sigabrt kill alarm-handler alarm-nohandler alarm-ignore selectWithoutTimeout selectWithTimeout getdents getdents64 pollWithoutTimeout pollWithPositiveTimeout pollWithNegativeTimeout rdtsc rdtscp nanosleep nanosleep-par alarm-resethand readDevRandom readDevRandomMultiple readDevUrandom exec-mkstemp complex_mkdirat_dirfd mkdir mkdirat_fdcwd mknod mknod_fullpath open_already_exists openat_already_exists simpleCreat simple_mkdirat_dirfd symlink symlinkat vdso-funcs multithreaded multipleThreads processAndThread processThreadProcess processThreadThread pthreadJoin pthreadNoJoin ptpThreadJoin ptpThreadNoJoin twoPthreadsJoin twoPthreadsNoJoin tenThreadJoin tenThreadNoJoin exitgroup exitgroupMainProcess condvar-parent-wait condvar-thread-wait sigsuspend sigtimedwait-no-timeout sigtimedwait-timeout-0s sigtimedwait-timeout-1s timerfd1 cpuid_fault waitidNullInfop pollAfterSetrlimit timeoutSeconds # confdir3 execveMainThread execveThreads open_tmpfile deadlockingPipe
 
 ifndef DETTRACE_NO_CPUID_INTERCEPTION
 SIMPLE_ROOTS := $(SIMPLE_ROOTS) cpuid
@@ -62,6 +62,12 @@ rdinsn.ok: rdinsn.bin
 	@$(DETTRACE) ./rdinsn.bin rdrand > ActualOutputs/rdrand.output
 	@echo "   Testing rdseed..."
 	@$(DETTRACE) ./rdinsn.bin rdseed > ActualOutputs/rdseed.output
+
+# --timeoutSeconds must tear the tracee down with a message and status 1.
+timeoutSeconds.ok: timeoutSeconds.bin setup
+	@echo "   Testing $(basename $<)..."
+	@(python3 timeout.py 20s ../../bin/dettrace --timeoutSeconds 1 -- ./$< 2>&1; echo "exit status: $$?") > ActualOutputs/$(basename $<).output
+	@$(DIFF_CMD) ActualOutputs/$(basename $<).output ExpectedOutputs/$(basename $<).output
 
 cpuid_fault.ok: cpuid_fault.bin
 	@echo "   Testing cpuid_fault works on host..."

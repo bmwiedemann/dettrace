@@ -1,0 +1,2 @@
+waitid(NULL infop): 0 ok
+second waitid: -1 No child processes

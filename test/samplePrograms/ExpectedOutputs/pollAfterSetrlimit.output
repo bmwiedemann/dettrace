@@ -1,0 +1,2 @@
+poll(timeout 0) on empty pipe: 0
+poll(timeout -1) on ready pipe: 1
