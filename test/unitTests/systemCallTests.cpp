@@ -14,7 +14,9 @@
 #include <sys/user.h>
 #include <sys/vfs.h>
 #include <sys/ptrace.h>
+#if defined(__x86_64__)
 #include <sys/reg.h>     /* For constants ORIG_EAX, etc */
+#endif
 #include <string.h>
 #include <sys/wait.h>
 #include <sys/syscall.h>    /* For SYS_write, etc */
@@ -227,7 +229,17 @@ TEST_CASE("uname", "uname"){
   REQUIRE(strcmp(buf.nodename,"") == 0);
   REQUIRE(strcmp(buf.release, "4.0") == 0);
   REQUIRE(strcmp(buf.version, "#1") == 0);
+#if defined(__aarch64__)
+  REQUIRE(strcmp(buf.machine, "aarch64") == 0);
+#elif defined(__powerpc64__)
+  REQUIRE(strcmp(buf.machine, "ppc64le") == 0);
+#elif defined(__s390x__)
+  REQUIRE(strcmp(buf.machine, "s390x") == 0);
+#elif defined(__riscv)
+  REQUIRE(strcmp(buf.machine, "riscv64") == 0);
+#else
   REQUIRE(strcmp(buf.machine, "x86_64") == 0);
+#endif
 
 #ifdef _GNU_SOURCE
   REQUIRE(strcmp(buf.domainname, "") == 0);

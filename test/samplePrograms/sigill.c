@@ -7,7 +7,9 @@
 #include <inttypes.h>
 
 static void handler(int sig, siginfo_t *si, void *ctxt) {
-  printf("Received signal %d\n  valid siginfo_t fields: signo:%d errno:%d code:%d\n",
+  // si_code differs between architectures (ILL_ILLOPN on x86, ILL_ILLOPC
+  // elsewhere), hence NONPORTABLE.
+  printf("Received signal %d\n  valid siginfo_t fields: signo:%d errno:%d\nNONPORTABLE   code:%d\n",
          sig, si->si_signo, si->si_errno, si->si_code);
   printf("NONPORTABLE   addr:%p\n", si->si_addr);
   // TODO: re-enable these extra checks if we switch to a run-twice-and-compare-outputs model
@@ -54,7 +56,18 @@ int main(int argc, char** argv) {
     return -1;
   }
   
+  // An instruction that is guaranteed to be undefined on each architecture.
+#if defined(__x86_64__)
   asm("ud2;");
+#elif defined(__aarch64__)
+  asm(".inst 0x00000000"); /* udf #0 */
+#elif defined(__powerpc64__) || defined(__s390x__)
+  asm(".long 0");
+#elif defined(__riscv)
+  asm(".word 0");
+#else
+  __builtin_trap();
+#endif
   
   return 0;
 }
