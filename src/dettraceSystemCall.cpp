@@ -1672,13 +1672,18 @@ void pselect6SystemCall::handleDetPost(
 // =======================================================================================
 bool pollSystemCall::handleDetPre(
     globalState& gs, state& s, ptracer& t, scheduler& sched) {
-  if (!s.originalArg3 && t.arg3() != 0) s.originalArg3 = t.arg3();
+  // Only on the first entry, not on our replays (poll_retry_count > 0).
+  // originalArg3 is shared with other handlers (wait4, utimensat,
+  // timer_settime), which leave their value behind, so it cannot serve
+  // as the "first entry" marker.
+  if (s.poll_retry_count == 0) {
+    s.originalArg3 = t.arg3();
+  }
 
-  if ((int)s.originalArg3 != 0) {
+  int timeout = (int)s.originalArg3;
+  if (timeout != 0) {
     t.writeArg3(0);
-    s.userDefinedTimeout = true;
-
-    if (s.originalArg3 > 0) s.poll_retry_maximum = s.originalArg3;
+    s.poll_retry_maximum = timeout > 0 ? timeout : LONG_MAX;
   }
   return true;
 }
