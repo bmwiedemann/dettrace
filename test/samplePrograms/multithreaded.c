@@ -20,6 +20,7 @@ int pipefd[2];
 void* second_thread(void *arg){
   printf("Thread2 trying to write to pipe.\n");
   char buf[bytesToWrite];
+  memset(buf, 'x', bytesToWrite);
   int bytes = write(pipefd[1], buf, bytesToWrite);
   printf("Thread2 wrote this many bytes: %d\n", bytes);
   printf("Thread2 is done.\n");

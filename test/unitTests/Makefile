@@ -2,7 +2,9 @@ BUILD=debug
 CXX = clang++
 cxxflags.debug   = -O0 -g
 cxxflags.release = -O3 -g
-CXXFLAGS = ${cxxflags.${BUILD}} -std=c++14 -Wall $(INCLUDE)
+# CATCH_CONFIG_NO_POSIX_SIGNALS: catch's signal handler uses SIGSTKSZ as an
+# array bound, which is no longer a constant with glibc >= 2.34.
+CXXFLAGS = ${cxxflags.${BUILD}} -std=c++14 -Wall $(INCLUDE) -DCATCH_CONFIG_NO_POSIX_SIGNALS
 
 src = $(wildcard *.cpp)
 obj = $(src:.cpp=.o)

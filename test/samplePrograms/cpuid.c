@@ -189,8 +189,10 @@ int main(void)
   else doesnot += sprintf(doesnot, " BMI2");
   if (bit_RTM & ebx) supports += sprintf(supports, " RTM");
   else doesnot += sprintf(doesnot, " RTM");
+#ifdef bit_MPX /* dropped from cpuid.h with GCC 14 */
   if (bit_MPX & ebx) supports += sprintf(supports, " MPX");
   else doesnot += sprintf(doesnot, " MPX");
+#endif
   if (bit_AVX512F & ebx) supports += sprintf(supports, " AVX512F");
   else doesnot += sprintf(doesnot, " AVX512F");
   if (bit_AVX512DQ & ebx) supports += sprintf(supports, " AVX512DQ");
@@ -207,8 +209,10 @@ int main(void)
   else doesnot += sprintf(doesnot, " CLFLUSHOPT");
   if (bit_CLWB & ebx) supports += sprintf(supports, " CLWB");
   else doesnot += sprintf(doesnot, " CLWB");
+#ifdef bit_AVX512PF /* dropped from cpuid.h with GCC 14 */
   if (bit_AVX512PF & ebx) supports += sprintf(supports, " AVX512PF");
   else doesnot += sprintf(doesnot, " AVX512PF");
+#endif
   /* if (bit_AVX512ER & ebx) supports += sprintf(supports, " AVX512ER"); */
   /* else doesnot += sprintf(doesnot, " AVX512ER"); */
   if (bit_AVX512CD & ebx) supports += sprintf(supports, " AVX512CD");

@@ -220,7 +220,7 @@ ls.ok:
 sh.ok:
 	@echo "   Testing sh..."
 	@rm -rf shTestFile
-	@echo ps \-p '$$$$' \| tail \-1 \| mawk \'\{ print '$$'4 \}\' > shTestFile
+	@echo ps \-p '$$$$' \| tail \-1 \| awk \'\{ print '$$'4 \}\' > shTestFile
 	@python3 timeout.py 5s $(DETTRACE) sh shTestFile > ActualOutputs/sh.output
 	@$(DIFF_CMD) ActualOutputs/sh.output ExpectedOutputs/sh.output
 

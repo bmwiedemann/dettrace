@@ -4,8 +4,8 @@ set -e
 
 GCC=gcc
 GXX=g++
-CLANG=clang-6.0
-CLANGXX=clang++-6.0
+CLANG=clang
+CLANGXX=clang++
 MAKE=make
 
 export TZ=UTC
@@ -98,7 +98,7 @@ diff ${TMPDIR}/datetime-0.out ${TMPDIR}/datetime-1.out && echo OK
 rm -f ${TMPDIR}/datetime.c ${TMPDIR}/datetime-{0,1} ${TMPDIR}/datetime-{0,1}.out
 
 cat > ${TMPDIR}/helloworld.py <<EOF
-#!/usr/bin/env python
+#!/usr/bin/env python3
 from __future__ import print_function
 import sys
 if __name__ == "__main__":

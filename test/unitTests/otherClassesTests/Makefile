@@ -2,7 +2,7 @@ BUILD=debug
 CXX ?= clang++
 cxxflags.debug   = -O0 -g
 cxxflags.release = -O3 -g
-CXXFLAGS = ${cxxflags.${BUILD}} -std=c++14 -Wall $(INCLUDE)
+CXXFLAGS = ${cxxflags.${BUILD}} -std=c++14 -Wall $(INCLUDE) -DCATCH_CONFIG_NO_POSIX_SIGNALS
 
 src = $(wildcard *.cpp)
 obj = $(src:.cpp=.o)
