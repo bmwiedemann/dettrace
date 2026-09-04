@@ -322,24 +322,31 @@ void dup2SystemCall::handleDetPost(
     return;
   }
 
-  // dup2 succeeded.
-  if (s.countFdStatus(fd) != 0) { // Only for pipes
+  // dup2 succeeded. Semantics of dup2 say the old newfd is closed first,
+  // so drop everything we knew about it and then copy over what we know
+  // about fd. Each kind of state stands on its own: a timerfd or signalfd
+  // is not in fdStatus, so gating the copy on that (as this did) left a
+  // duplicated timerfd unknown to us, and reading it replayed the EAGAIN
+  // of the non-blocking descriptor we opened behind the tracee's back
+  // forever.
+  s.fdStatus.get()->erase(newfd);
+  s.remote_sockfds->erase(newfd);
+  s.timerfds->erase(newfd);
+  s.signalfds->erase(newfd);
 
-    // Semantics of dup2 say old fd could be closed and overwritten, we do that
-    // implicitly here!
+  if (s.countFdStatus(fd) != 0) {
     s.setFdStatus(newfd, s.getFdStatus(fd));
-    if (s.fd_is_remote(fd)) {
-      s.remote_sockfds->insert(newfd);
-    }
-    if (s.fd_is_timerfd(fd)) {
-      auto it = (*s.timerfds)[fd];
-      s.timerfds->insert({newfd, it});
-    }
-    if (s.fd_is_signalfd(fd)) {
-      s.signalfds->insert(newfd);
-    }
-    gs.log.writeToLog(Importance::info, "%d = dup2(%d)\n", newfd, fd);
   }
+  if (s.fd_is_remote(fd)) {
+    s.remote_sockfds->insert(newfd);
+  }
+  if (s.fd_is_timerfd(fd)) {
+    (*s.timerfds)[newfd] = (*s.timerfds)[fd];
+  }
+  if (s.fd_is_signalfd(fd)) {
+    s.signalfds->insert(newfd);
+  }
+  gs.log.writeToLog(Importance::info, "%d = dup2(%d)\n", newfd, fd);
 }
 
 static const char* epoll_op(int op) {
