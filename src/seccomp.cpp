@@ -315,6 +315,10 @@ void seccomp::loadRules(bool debug, bool convertUids) {
   // switch back to writing under the stack
   noIntercept(SYS_mmap);
 
+  // Page residency is machine state: we report every page of a mapped range
+  // as resident.
+  intercept(SYS_mincore);
+
   intercept(SYS_nanosleep);
   intercept(SYS_clock_nanosleep);
   intercept(SYS_newfstatat);

@@ -22,6 +22,8 @@
 #include <sys/syscall.h>    /* For SYS_write, etc */
 
 #include <sys/time.h>
+#include <errno.h>
+#include <sys/mman.h>
 #include <sys/sysinfo.h>
 #include <sys/resource.h>
 
@@ -200,6 +202,39 @@ TEST_CASE("prlimit64", "prlimit64"){
     // REQUIRE(RLIM_INFINITY == limits.rlim_cur);
     // REQUIRE(RLIM_INFINITY == limits.rlim_max);
   }
+}
+
+TEST_CASE("mincore", "mincore"){
+  long pageSize = sysconf(_SC_PAGESIZE);
+  unsigned char* p = (unsigned char*) mmap(nullptr, 4 * pageSize,
+                                           PROT_READ | PROT_WRITE,
+                                           MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  REQUIRE(p != MAP_FAILED);
+
+  // Not one of these pages has been touched, yet all of them must be reported
+  // as resident: whether they really are depends on the whole machine.
+  unsigned char vec[4];
+  memset(vec, 0xaa, sizeof(vec));
+  REQUIRE(mincore(p, 4 * pageSize, vec) == 0);
+  for (int i = 0; i < 4; i++) {
+    REQUIRE(vec[i] == 1);
+  }
+
+  // The kernel fills the vector up to a hole before it fails with ENOMEM, so
+  // those entries have to be answered too.
+  REQUIRE(munmap(p + 2 * pageSize, pageSize) == 0);
+  memset(vec, 0xaa, sizeof(vec));
+  REQUIRE(mincore(p, 4 * pageSize, vec) == -1);
+  REQUIRE(errno == ENOMEM);
+  for (int i = 0; i < 2; i++) {
+    REQUIRE(vec[i] == 1);
+  }
+
+  // A misaligned address is refused before anything is copied out.
+  memset(vec, 0xaa, sizeof(vec));
+  REQUIRE(mincore(p + 1, pageSize, vec) == -1);
+  REQUIRE(errno == EINVAL);
+  REQUIRE(vec[0] == 0xaa);
 }
 
 TEST_CASE("sysinfo", "sysinfo"){

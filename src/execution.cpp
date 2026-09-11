@@ -1302,6 +1302,9 @@ bool execution::callPreHook(
   case SYS_clock_nanosleep:
     return clock_nanosleepSystemCall::handleDetPre(gs, s, t, sched);
 
+  case SYS_mincore:
+    return mincoreSystemCall::handleDetPre(gs, s, t, sched);
+
   case SYS_mkdir:
     return mkdirSystemCall::handleDetPre(gs, s, t, sched);
 
@@ -1651,6 +1654,9 @@ void execution::callPostHook(
 
   case SYS_nanosleep:
     return nanosleepSystemCall::handleDetPost(gs, s, t, sched);
+
+  case SYS_mincore:
+    return mincoreSystemCall::handleDetPost(gs, s, t, sched);
 
   case SYS_mkdir:
     return mkdirSystemCall::handleDetPost(gs, s, t, sched);

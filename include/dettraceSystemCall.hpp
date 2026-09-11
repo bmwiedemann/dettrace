@@ -793,6 +793,33 @@ public:
 // =======================================================================================
 /**
  *
+ * int mincore(void* addr, size_t length, unsigned char* vec);
+ *
+ * mincore() reports which pages of a mapping are resident in core.  Residency
+ * depends on the memory pressure of the whole machine, so the vector it fills
+ * in is nondeterministic.  We let the call through, because its return value
+ * has to reflect the real mapping layout (callers use the ENOMEM an unmapped
+ * range gives them to find the holes), and report every page of a mapped
+ * range as resident: a caller that skips the pages it is told are not
+ * resident then still sees all of its data.
+ *
+ * One residual nondeterminism is out of reach: the kernel answers EAGAIN when
+ * it cannot allocate the temporary page it needs, which depends on the memory
+ * pressure of the machine.
+ */
+class mincoreSystemCall {
+public:
+  static bool handleDetPre(
+      globalState& gs, state& s, ptracer& t, scheduler& sched);
+  static void handleDetPost(
+      globalState& gs, state& s, ptracer& t, scheduler& sched);
+
+  const int syscallNumber = SYS_mincore;
+  const string syscallName = "mincore";
+};
+// =======================================================================================
+/**
+ *
  * int mkdir(const char *pathname, mode_t mode);
  *
  * mkdir() attempts to create a directory named pathname.

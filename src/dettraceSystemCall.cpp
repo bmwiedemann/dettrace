@@ -1361,6 +1361,55 @@ bool clock_nanosleepSystemCall::handleDetPre(
   return false;
 }
 // =======================================================================================
+bool mincoreSystemCall::handleDetPre(
+    globalState& gs, state& s, ptracer& t, scheduler& sched) {
+  return true;
+}
+
+void mincoreSystemCall::handleDetPost(
+    globalState& gs, state& s, ptracer& t, scheduler& sched) {
+  int retval = t.getReturnValue();
+
+  // mincore() copies the residency of every page out to the tracee until it
+  // reaches a hole, and only then fails with ENOMEM, so that vector has to be
+  // overwritten as well.  EINVAL (a misaligned address), EFAULT and EAGAIN are
+  // all answered before anything is copied out.
+  if (retval < 0 && retval != -ENOMEM) {
+    return;
+  }
+
+  unsigned char* vec = (unsigned char*)t.arg3();
+  size_t length = (size_t)t.arg2();
+  if (vec == nullptr || length == 0) {
+    return;
+  }
+
+  size_t pageSize = (size_t)sysconf(_SC_PAGESIZE);
+  // Avoids the overflow that rounding up would have for a huge length.
+  size_t pages = length / pageSize + (length % pageSize != 0);
+
+  unsigned char resident[4096];
+  memset(resident, 1, sizeof(resident));
+
+  for (size_t written = 0; written < pages; written += sizeof(resident)) {
+    size_t amountToWrite = min(sizeof(resident), pages - written);
+    struct iovec local = {resident, amountToWrite};
+    struct iovec remote = {vec + written, amountToWrite};
+
+    // Nothing guarantees that the tracee can be written past the hole that
+    // made the call fail - the kernel never went there either.  What it did
+    // fill is a contiguous prefix of the vector, so stopping at the first
+    // chunk we cannot write still covers all of it, and unlike
+    // writeVmTraceeRaw this does not take dettrace down with it.
+    if (process_vm_writev(t.getPid(), &local, 1, &remote, 1, 0) < 0) {
+      break;
+    }
+    t.writeVmCalls++;
+  }
+
+  return;
+}
+// =======================================================================================
 bool mkdirSystemCall::handleDetPre(
     globalState& gs, state& s, ptracer& t, scheduler& sched) {
   printInfoString(t.arg1(), gs.log, s.traceePid, t);
