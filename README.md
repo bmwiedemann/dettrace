@@ -127,6 +127,31 @@ Notice the file's metadata is now deterministic!
 
 The current release of dettrace does not build its a custom chroot environment for executing each command.  Rather, you can control the base filesystem image using existing container technology like Docker.  Running dettrace inside a Docker container will expose the `/` file system including CWD.
 
+## What the container makes deterministic
+
+Everything nondeterministic is hidden by default and has to be opted back into:
+
+- **Time**: a virtual clock starting at `--epoch` (1993-08-08 22:00:00 by default) and advancing by `--clock-step` per query.
+- **Filesystem metadata**: mtime, atime and inode numbers; `/tmp` always starts empty and temporary file names are deterministic.
+- **Randomness**: `/dev/random`, `/dev/urandom` and `getrandom` are fed by a PRNG seeded from `--prng-seed`; `rdrand` is disabled.
+- **PIDs**: a fresh PID namespace, so the first process is always pid 2.
+- **The CPU**: `CPUID` and `rdtsc`/`rdtscp` are trapped and answered from a fixed table, and `/proc/cpuinfo` is a matching canonical file rather than the host's. The guest sees exactly **one** CPU: `nproc`, `sysconf(_SC_NPROCESSORS_ONLN)`, `sched_getaffinity`, `sched_getcpu` and `/proc/stat` agree on it, and the sysfs trees that describe the host's topology (`/sys/devices/system/cpu`, `/sys/devices/system/node`, `/sys/bus/cpu`) are hidden.
+- **The machine's identity**: the host name is `reproducible` in `uname(2)`, `gethostname(2)` and `/proc/sys/kernel/hostname` alike, and the kernel is "Linux 4.0 #1" in `uname(2)`, `/proc/version` and `/proc/sys/kernel/*` alike.
+- **Other `/proc` entries**: `meminfo`, `stat`, `filesystems`, `uptime`, `loadavg` and `sys/kernel/random/boot_id` are fixed files. `stat`, `uptime` and `loadavg` agree with what `sysinfo(2)` reports.
+
+Pass `--real-proc` to opt back into the host's real `/proc`, `/sys`, `/dev` and CPU count, `--network` to allow networking, `--aslr` to re-enable address space randomization, and `--host-utsns` to keep the host's name in `/proc`.
+
+Known gaps:
+
+- `--in-docker` and `--host-mountns` create no mount namespace, so none of the file overrides apply and the guest keeps the host's `/proc`. The single-CPU emulation stands down with them, so that the guest is not told it has one CPU while `nproc` still reads the host's count off `/proc/stat`.
+- The sysfs trees above are hidden by refusing to *open* those paths, so a guest that `chdir()`s into one and opens a relative path, or that probes with `stat`/`access` rather than `open`, still sees the host's. Everything that counts CPUs in practice -- glibc, libgomp, hwloc, `lscpu` -- uses an absolute path or opens the directory first.
+- `/proc/self/status`' `Cpus_allowed` and `/proc/self/stat`'s last-CPU field are per-process files that cannot be mounted over. They are determinized by pinning the guest to CPU 0, which only a cpuset cgroup excluding CPU 0 defeats; and the kernel prints the mask at the host's `nr_cpu_ids` width either way, so its number of digits still reflects the host.
+- `/proc/sys/kernel/random/uuid` is still the host's, because it is generated per read and a static file would make every read return the same UUID.
+- `/proc/stat`'s `btime` does not follow `--epoch`.
+- `/proc/meminfo` is deterministic but predates `sysinfo(2)`'s numbers and disagrees with them -- it reports 10.4 GiB free where `sysinfo(2)` reports 124 GiB -- and its last line is truncated, the file having been captured with a 1024-byte read.
+- The `/proc` overrides are bind mounts of files in dettrace's own install tree, remounted read-only so that a guest cannot write through them. The `/etc` ones are not, since those are ordinary writable files on a real system: a guest that runs `ldconfig` still rewrites the shipped `root/etc/ld.so.cache`.
+- `AT_HWCAP` is not filtered, so on non-x86 architectures a program can still probe SIMD support through the auxiliary vector.
+
 ## Evaluation and expected result
 
 Any program running under Dettrace is expected to produce deterministic output. So running the `date` command multiple times will produce the same result.

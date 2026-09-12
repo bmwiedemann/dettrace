@@ -28,6 +28,24 @@
 #define DETTRACE_ROOTFS ""
 #endif
 
+// /proc/cpuinfo's format is entirely architecture specific, and on x86_64 its
+// contents have to agree with the canonical CPUID we report in
+// src/execution.cpp, so ship one file per architecture rather than trying to
+// synthesize one.
+#if defined(__x86_64__)
+#define DETTRACE_CPUINFO "/proc/cpuinfo.x86_64"
+#elif defined(__aarch64__)
+#define DETTRACE_CPUINFO "/proc/cpuinfo.aarch64"
+#elif defined(__powerpc64__)
+#define DETTRACE_CPUINFO "/proc/cpuinfo.ppc64le"
+#elif defined(__s390x__)
+#define DETTRACE_CPUINFO "/proc/cpuinfo.s390x"
+#elif defined(__riscv)
+#define DETTRACE_CPUINFO "/proc/cpuinfo.riscv64"
+#else
+#define DETTRACE_CPUINFO nullptr
+#endif
+
 /** * Useful link for understanding ptrace as it works with execve.
  * https://stackoverflow.com/questions/7514837/why-does
  * https://stackoverflow.com/questions/47006441/ptrace-catching-many-traps-for-execve/47039345#47039345
@@ -44,8 +62,23 @@ struct MountPoint {
   // tree with locked children (EINVAL).
   unsigned long flags = MS_BIND | MS_REC;
   string data;
+  // Overrides are best-effort: their targets do not exist on every kernel and
+  // dettrace must not refuse to run just because one of them is missing.
+  // User-specified -v volumes keep the default of failing loudly.
+  bool optional = false;
+  // Remount the bind read-only. Set for the /proc overrides, which a real
+  // kernel does not let anyone write either; not for the /etc ones, which
+  // are ordinary writable files on a real system.
+  bool readonly = false;
   bool is_valid(void) const { return !source.empty() && !target.empty(); }
 };
+
+// The tracee applies the mounts with a raw mount(2) whose source has to
+// exist, so never offer one we do not ship -- there is no canonical
+// /proc/cpuinfo for architectures we have not written one for.
+static bool overrideSourceExists(const std::string& path) {
+  return access(path.c_str(), R_OK) == 0;
+}
 
 struct programArgs {
   int argc;
@@ -177,26 +210,58 @@ static int run_main(programArgs& args) {
   // Create our list of mounts.
   std::vector<MountPoint> mounts;
 
+  // Bind one of our canonical files over a host path. Non-fatal when the
+  // target does not exist on this kernel, and read-only where a real kernel
+  // would not let the guest write the file either.
+  auto addOverride = [&](const char* src, const char* target, bool readonly) {
+    mounts.push_back(MountPoint{.source = args.pathToChroot + src,
+                                .target = target,
+                                .optional = true,
+                                .readonly = readonly});
+  };
+  // Same, for a source we may legitimately not ship: there is no canonical
+  // /proc/cpuinfo for architectures nobody has written one for. Every other
+  // override is expected to be installed, and mounting it still fails loudly
+  // if it is missing, so that a broken install cannot quietly serve the
+  // host's values.
+  auto addOverrideIfShipped = [&](const char* src, const char* target) {
+    if (overrideSourceExists(args.pathToChroot + src)) {
+      addOverride(src, target, true);
+    }
+  };
+
   if (args.with_proc_overrides) {
-    mounts.push_back(MountPoint{.source = args.pathToChroot + "/proc/meminfo",
-                                .target = "/proc/meminfo"});
-    mounts.push_back(MountPoint{.source = args.pathToChroot + "/proc/stat",
-                                .target = "/proc/stat"});
-    mounts.push_back(
-        MountPoint{.source = args.pathToChroot + "/proc/filesystems",
-                   .target = "/proc/filesystems"});
+    addOverride("/proc/meminfo", "/proc/meminfo", true);
+    addOverride("/proc/stat", "/proc/stat", true);
+    addOverride("/proc/filesystems", "/proc/filesystems", true);
+    // The CPUID instruction is masked, but nothing stopped a SIMD probe or a
+    // per-core bucketing scheme from reading the host's CPU out of /proc.
+    const char* cpuinfo = DETTRACE_CPUINFO;
+    if (cpuinfo != nullptr) {
+      addOverrideIfShipped(cpuinfo, "/proc/cpuinfo");
+    }
+    // The kernel identity has to match the uname(2) we synthesize. These
+    // sysctls are per-UTS-namespace but read-only and inherited, so unlike
+    // hostname and domainname they cannot be set, only mounted over.
+    addOverride("/proc/version", "/proc/version", true);
+    addOverride("/proc/sys_kernel_ostype", "/proc/sys/kernel/ostype", true);
+    addOverride(
+        "/proc/sys_kernel_osrelease", "/proc/sys/kernel/osrelease", true);
+    addOverride("/proc/sys_kernel_version", "/proc/sys/kernel/version", true);
+    // A fresh UUID on every boot of the host.
+    addOverride(
+        "/proc/sys_kernel_random_boot_id", "/proc/sys/kernel/random/boot_id",
+        true);
+    // Both of these agree with what sysinfo(2) reports.
+    addOverride("/proc/uptime", "/proc/uptime", true);
+    addOverride("/proc/loadavg", "/proc/loadavg", true);
   }
 
   if (args.with_etc_overrides) {
-    mounts.push_back(MountPoint{.source = args.pathToChroot + "/etc/hosts",
-                                .target = "/etc/hosts"});
-    mounts.push_back(MountPoint{.source = args.pathToChroot + "/etc/passwd",
-                                .target = "/etc/passwd"});
-    mounts.push_back(MountPoint{.source = args.pathToChroot + "/etc/group",
-                                .target = "/etc/group"});
-    mounts.push_back(
-        MountPoint{.source = args.pathToChroot + "/etc/ld.so.cache",
-                   .target = "/etc/ld.so.cache"});
+    addOverride("/etc/hosts", "/etc/hosts", false);
+    addOverride("/etc/passwd", "/etc/passwd", false);
+    addOverride("/etc/group", "/etc/group", false);
+    addOverride("/etc/ld.so.cache", "/etc/ld.so.cache", false);
   }
 
   // Add all the user-specified mounts *after* so that they can override our
@@ -227,6 +292,19 @@ static int run_main(programArgs& args) {
       .mounts = (Mount* const*)(mountPtrs.data()),
       .chroot_dir = nullptr,
       .with_devrand_overrides = args.with_devrand_overrides,
+      // The syscall-level half of the canonical machine (the affinity
+      // emulation and the /sys/devices/system/cpu hiding) only makes sense
+      // when the mount-level half can be applied too. Without a mount
+      // namespace -- --host-mountns, and --in-docker, which clears every
+      // namespace flag -- the guest keeps the host's /proc/cpuinfo and
+      // /proc/stat, so telling it that it has one CPU while nproc still reads
+      // the host's count off /proc/stat would leave it unable to pin the
+      // threads it just decided to spawn.
+      .with_proc_overrides =
+          args.with_proc_overrides && (cloneFlags & CLONE_NEWNS) != 0,
+      // Not mount-gated: refusing to open the host's sysfs topology needs no
+      // namespace, and it was unconditional before this change.
+      .hide_host_topology = args.with_proc_overrides,
       .debug_level = args.debugLevel,
       .use_color = args.useColor,
       .print_statistics = args.printStatistics,
@@ -324,6 +402,8 @@ static std::vector<std::unique_ptr<Mount>> make_mounts(
     mount->fstype = v.fstype.empty() ? nullptr : v.fstype.c_str();
     mount->flags = v.flags;
     mount->data = v.data.empty() ? nullptr : v.data.c_str();
+    mount->optional = v.optional;
+    mount->readonly = v.readonly;
     ptrs.push_back(std::unique_ptr<Mount>(mount));
   }
 
@@ -438,7 +518,7 @@ programArgs parseProgramArguments(int argc, char* argv[]) {
       // cxxopts mangles the formatting here, so leaving this out for now -RN:
       // "HOME to the following  \n"
       // "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-      // "HOSTNAME=nowhere"
+      // "HOSTNAME=reproducible"
       // "HOME=/root"
       // "\n"
       // "Setting `minimal` is equivalent to passing the above variables via --env. ",
@@ -490,10 +570,14 @@ programArgs parseProgramArguments(int argc, char* argv[]) {
       "computation.",
       cxxopts::value<bool>()->default_value("false"))
     ( "real-proc",
-      "When set, the program can access the full, nondeterministic /proc and /dev "
-      "interfaces. In the default, disabled setting, deterministic information is "
-      "presented in these paths instead. This overlay presents a canonical virtual "
-      "hardware platform to the application.",
+      "When set, the program can access the full, nondeterministic /proc, /sys and "
+      "/dev interfaces, and the real CPU count. In the default, disabled setting, a "
+      "canonical virtual hardware platform is presented instead: a single CPU, on "
+      "which nproc, sched_getaffinity, sched_getcpu, /proc/cpuinfo, /proc/stat and "
+      "/sys/devices/system/cpu all agree; a /proc/cpuinfo matching the CPUID values "
+      "dettrace reports; a kernel identity in /proc/version and /proc/sys/kernel/* "
+      "matching uname(2); and fixed /proc/{meminfo,uptime,loadavg,filesystems} and "
+      "/proc/sys/kernel/random/boot_id.",
       cxxopts::value<bool>()->default_value("false"))
     ( "aslr",
       "Enable Address Space Layout Randomization. ASLR is disabled by default "
@@ -517,6 +601,14 @@ programArgs parseProgramArguments(int argc, char* argv[]) {
       "when this is disabled, dettrace creates a fresh mount namespace. "
       "Setting to `true` is potentially dangerous. dettrace may pollute the host "
       "system’s mount namespace and not successfully clean up all of these mounts.",
+      cxxopts::value<bool>())
+    ( "host-utsns",
+      "Allow access to the host’s UTS namespace, that is, its host name and NIS "
+      "domain name. By default dettrace creates a fresh UTS namespace and sets a "
+      "fixed host name there, so that /proc/sys/kernel/hostname agrees with the "
+      "host name uname(2) reports instead of revealing which machine the guest "
+      "ran on. Setting this to `true` leaves the host’s names in /proc; uname(2) "
+      "is synthesized either way.",
       cxxopts::value<bool>());
 
   options.add_options(
@@ -624,6 +716,8 @@ programArgs parseProgramArguments(int argc, char* argv[]) {
         (static_cast<OptionValue1>(result["host-pidns"])).unwrap_or(false);
     bool host_mountns =
         (static_cast<OptionValue1>(result["host-mountns"])).unwrap_or(false);
+    bool host_utsns =
+        (static_cast<OptionValue1>(result["host-utsns"])).unwrap_or(false);
     if (!host_userns) {
       args.clone_ns_flags |= CLONE_NEWUSER;
     }
@@ -632,6 +726,9 @@ programArgs parseProgramArguments(int argc, char* argv[]) {
     }
     if (!host_mountns) {
       args.clone_ns_flags |= CLONE_NEWNS;
+    }
+    if (!host_utsns) {
+      args.clone_ns_flags |= CLONE_NEWUTS;
     }
 
     args.with_proc_overrides = !use_real_proc;
@@ -698,7 +795,7 @@ programArgs parseProgramArguments(int argc, char* argv[]) {
       args.envs.insert(
           {"PATH",
            "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"});
-      args.envs.insert({"HOSTNAME", "nowhare"});
+      args.envs.insert({"HOSTNAME", DETTRACE_HOSTNAME});
       args.envs.insert({"HOME", "/root"});
     } else if (base_env == "empty") {
     } else {

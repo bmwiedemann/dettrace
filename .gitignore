@@ -19,3 +19,5 @@ benchmarking/*.time
 *.tmp
 *.tbz
 version
+# ...but root/proc/version is a canonical file we ship, not a build artifact.
+!root/proc/version

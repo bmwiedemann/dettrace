@@ -511,6 +511,38 @@ string resolve_tracee_path(
   return res;
 }
 // =======================================================================================
+/**
+ * Is this path in one of the sysfs subtrees that describe the host's CPU
+ * topology?
+ *
+ * No sysfs of ours is mounted over the host's, so hiding these is the only
+ * thing keeping that topology away from the guest:
+ * possible/present/online/offline/kernel_max, the per-CPU directories, the
+ * cpu bus device list and the NUMA nodes all describe hardware the canonical
+ * machine does not have. With the directories themselves gone, glibc's
+ * get_nprocs_conf() cannot opendir() them to count cpuN entries and falls
+ * back to get_nprocs(), i.e. to our sched_getaffinity, which says 1.
+ *
+ * Matches the path as the tracee wrote it, so a guest that chdir()s into one
+ * of these directories and then opens a relative path still reads the host's
+ * values. Every caller that matters -- glibc, libgomp, hwloc, lscpu -- uses
+ * absolute paths or opens the directory first, which is refused here.
+ */
+static bool isHostCpuTopologyPath(const string& path) {
+  static const string subtrees[] = {
+      "/sys/devices/system/cpu",
+      "/sys/devices/system/node",
+      "/sys/bus/cpu",
+  };
+  for (const auto& dir : subtrees) {
+    if (path.compare(0, dir.size(), dir) == 0 &&
+        (path.size() == dir.size() || path[dir.size()] == '/')) {
+      return true;
+    }
+  }
+  return false;
+}
+// =======================================================================================
 bool handlePreOpens(
     globalState& gs,
     state& s,
@@ -612,7 +644,7 @@ Linux acghaswellcat16 4.15.0-43-generic #46-Ubuntu SMP Thu Dec 6 14:45:28 UTC
     gs.devRandomOpens++;
   } else if (path == "/dev/urandom") {
     gs.devUrandomOpens++;
-  } else if (path == "/sys/devices/system/cpu/possible") {
+  } else if (gs.hide_host_topology && isHostCpuTopologyPath(path)) {
     failSystemCall(gs, s, t, ENOENT);
     return false;
   }

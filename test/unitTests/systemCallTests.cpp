@@ -263,7 +263,7 @@ TEST_CASE("uname", "uname"){
   int ret = uname(&buf);
   REQUIRE(ret == 0);
   REQUIRE(strcmp(buf.sysname, "Linux") == 0);
-  REQUIRE(strcmp(buf.nodename,"") == 0);
+  REQUIRE(strcmp(buf.nodename,"reproducible") == 0);
   REQUIRE(strcmp(buf.release, "4.0") == 0);
   REQUIRE(strcmp(buf.version, "#1") == 0);
 #if defined(__aarch64__)
@@ -281,6 +281,22 @@ TEST_CASE("uname", "uname"){
 #ifdef _GNU_SOURCE
   REQUIRE(strcmp(buf.domainname, "") == 0);
 #endif
+
+  // glibc answers gethostname(2) out of uname(2), so this only guards that
+  // the two stay tied together.
+  char host[256] = {0};
+  REQUIRE(gethostname(host, sizeof(host)) == 0);
+  REQUIRE(strcmp(host, buf.nodename) == 0);
+
+  // /proc/sys/kernel/hostname is the one that actually leaked the host's
+  // name, and it has to agree with both of the above.
+  char procHost[256] = {0};
+  FILE* f = fopen("/proc/sys/kernel/hostname", "r");
+  REQUIRE(f != NULL);
+  REQUIRE(fgets(procHost, sizeof(procHost), f) != NULL);
+  fclose(f);
+  procHost[strcspn(procHost, "\n")] = '\0';
+  REQUIRE(strcmp(procHost, buf.nodename) == 0);
 }
 
 TEST_CASE("utime", "utime"){

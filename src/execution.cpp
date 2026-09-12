@@ -74,6 +74,8 @@ execution::execution(
     int nbVdsoFuncs,
     unsigned prngSeed,
     bool allow_network,
+    bool with_proc_overrides,
+    bool hide_host_topology,
     logical_clock::time_point epoch,
     logical_clock::duration clock_step,
     SysEnter sys_enter_hook,
@@ -90,7 +92,8 @@ execution::execution(
           log,          ValueMapper<DevIno, ino_t, DevInoHash>{log, "inode map", 1},
           ModTimeMap{}, kernelCheck(4, 12, 0),
           prngSeed,     epoch,
-          allow_network},
+          allow_network, with_proc_overrides,
+          hide_host_topology},
       myScheduler{startingPid, log},
       debugLevel{debugLevel},
       vdsoFuncs(vdsoFuncs, vdsoFuncs + nbVdsoFuncs),
@@ -1172,6 +1175,12 @@ bool execution::callPreHook(
   case SYS_getcpu:
     return getcpuSystemCall::handleDetPre(gs, s, t, sched);
 
+  case SYS_sched_getaffinity:
+    return sched_getaffinitySystemCall::handleDetPre(gs, s, t, sched);
+
+  case SYS_sched_setaffinity:
+    return sched_setaffinitySystemCall::handleDetPre(gs, s, t, sched);
+
   case SYS_kill:
   case SYS_tkill:
     return killSystemCall::handleDetPre(gs, s, t, sched);
@@ -1779,6 +1788,12 @@ void execution::callPostHook(
 
   case SYS_getcpu:
     return getcpuSystemCall::handleDetPost(gs, s, t, sched);
+
+  case SYS_sched_getaffinity:
+    return sched_getaffinitySystemCall::handleDetPost(gs, s, t, sched);
+
+  case SYS_sched_setaffinity:
+    return sched_setaffinitySystemCall::handleDetPost(gs, s, t, sched);
 
   case SYS_kill:
   case SYS_tkill:

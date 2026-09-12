@@ -184,6 +184,8 @@ public:
       int nbVdsoFuncs,
       unsigned prngSeed,
       bool allow_network,
+      bool with_proc_overrides,
+      bool hide_host_topology,
       logical_clock::time_point epoch,
       logical_clock::duration clock_step,
       SysEnter sys_enter_hook,

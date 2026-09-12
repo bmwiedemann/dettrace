@@ -5,7 +5,9 @@
 
 #include <fcntl.h>
 #include <pthread.h>
+#include <sched.h>
 #include <signal.h>
+#include <string.h>
 #include <sys/mount.h>
 #include <sys/personality.h>
 #include <sys/prctl.h>
@@ -285,6 +287,22 @@ static int _dettrace_child_impl(const CloneArgs* clone_args) {
         "failed to mount / as slave");
   }
 
+  // With CLONE_NEWUSER and CLONE_NEWUTS requested in the same clone(), this
+  // child holds a full capability set in the new user namespace, which owns
+  // the new UTS namespace, so neither call needs privilege on the host. A
+  // fresh UTS namespace inherits the parent's names, so setting them here is
+  // required, not belt and braces. Doing it once, here, is what makes
+  // gethostname(2), uname(2) and /proc/sys/kernel/{hostname,domainname} agree
+  // without intercepting a single system call.
+  if ((opts->clone_ns_flags & CLONE_NEWUTS) == CLONE_NEWUTS) {
+    doWithCheck(
+        sethostname(DETTRACE_HOSTNAME, strlen(DETTRACE_HOSTNAME)),
+        "unable to set the guest host name");
+    doWithCheck(
+        setdomainname(DETTRACE_DOMAINNAME, strlen(DETTRACE_DOMAINNAME)),
+        "unable to set the guest NIS domain name");
+  }
+
   if ((opts->clone_ns_flags & CLONE_NEWPID) == CLONE_NEWPID) {
     pid_t first_pid;
     if ((first_pid = getpid()) != 1) {
@@ -383,6 +401,8 @@ static int _dettrace_child_impl(const CloneArgs* clone_args) {
                   clone_args->nb_vdso,
                   opts->prng_seed,
                   opts->allow_network,
+                  opts->with_proc_overrides,
+                  opts->hide_host_topology,
                   logical_clock::from_time_t(opts->epoch),
                   chrono::microseconds(opts->clock_step),
                   opts->sys_enter,
@@ -458,6 +478,49 @@ static int runTracee(
         personality(PER_LINUX | ADDR_NO_RANDOMIZE), "Unable to disable ASLR");
   }
 
+  // Run on a single CPU. dettrace's scheduler already serializes tracees, so
+  // this costs no real parallelism, and it is what determinizes the per-pid
+  // procfs files -- /proc/self/status' Cpus_allowed and /proc/self/stat's
+  // last-CPU field -- which are created on demand and so cannot be mounted
+  // over. It also makes the getcpu() == 0 we already force actually true
+  // rather than a fiction.
+  //
+  // CPU 0 specifically, so that the file agrees with the mask
+  // sched_getaffinitySystemCall hands the guest. Only a cpuset that excludes
+  // CPU 0 forces a different one, and there the two necessarily disagree;
+  // nothing we can do from here fixes that, nor the fact that the kernel
+  // prints the mask at the host's nr_cpu_ids width.
+  if (opts.with_proc_overrides) {
+    cpu_set_t one;
+    CPU_ZERO(&one);
+    CPU_SET(0, &one);
+    // Asking for CPU 0 outright rather than reading the mask first: a
+    // sched_getaffinity with a cpu_set_t is refused outright on a host with
+    // more than CPU_SETSIZE possible CPUs, which would leave us pinning
+    // nothing, while setting a mask the kernel considers short is fine -- it
+    // zero-fills the rest.
+    if (sched_setaffinity(0, sizeof(one), &one) == -1) {
+      // Only a cpuset that excludes CPU 0 gets here. Settle for the lowest
+      // CPU we are allowed on; that disagrees with the mask
+      // sched_getaffinitySystemCall reports, and nothing we can do from here
+      // fixes it.
+      cpu_set_t allowed;
+      CPU_ZERO(&allowed);
+      if (sched_getaffinity(0, sizeof(allowed), &allowed) == 0) {
+        for (int cpu = 1; cpu < CPU_SETSIZE; cpu++) {
+          if (CPU_ISSET(cpu, &allowed)) {
+            CPU_ZERO(&one);
+            CPU_SET(cpu, &one);
+            // Deliberately not fatal either: the guest's view of its own
+            // affinity is synthesized regardless.
+            sched_setaffinity(0, sizeof(one), &one);
+            break;
+          }
+        }
+      }
+    }
+  }
+
   if ((opts.clone_ns_flags & CLONE_NEWNS) == CLONE_NEWNS) {
     if (!fileExists("/dev/null")) {
       // we're running under reprotest as sudo, so we can use real mknod
@@ -498,10 +561,32 @@ static int runTracee(
 
       while (const Mount* m = *mounts) {
         if (mount(m->source, m->target, m->fstype, m->flags, m->data) == -1) {
+          // Taken before anything else can clobber it.
+          const char* reason = strerror(errno);
           auto err = "Unable to bind mount: " +
                      std::string{m->source ? m->source : "none"} + " to " +
                      std::string{m->target ? m->target : "none"};
-          sysError(err.c_str());
+          // Our own overrides are best effort: not every kernel has every
+          // target, e.g. /proc/sys/kernel/random/boot_id. A -v volume the
+          // user asked for still fails loudly.
+          if (m->optional) {
+            std::cerr << "Warning: " << err << ": " << reason << "\n";
+          } else {
+            sysError(err.c_str());
+          }
+        } else if (m->readonly) {
+          // The bind exposes a file in dettrace's own install tree, and a
+          // real kernel lets nobody write the files we do this to. Without
+          // this a guest that writes one -- `echo > /proc/cpuinfo`, which it
+          // expects to fail -- silently replaces the canonical data for every
+          // later run on the machine.
+          const unsigned long roFlags = MS_BIND | MS_REMOUNT | MS_RDONLY;
+          if (mount(nullptr, m->target, nullptr, roFlags, nullptr) == -1) {
+            const char* reason = strerror(errno);
+            std::cerr << "Warning: unable to make "
+                      << std::string{m->target ? m->target : "none"}
+                      << " read-only: " << reason << "\n";
+          }
         }
         ++mounts;
       }

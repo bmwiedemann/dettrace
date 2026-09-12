@@ -1,0 +1,6 @@
+gethostname() = 0, [reproducible]
+getdomainname() = 0, []
+uname nodename = [reproducible]
+uname domainname = []
+/proc/sys/kernel/hostname = [reproducible]
+/proc/sys/kernel/domainname = []

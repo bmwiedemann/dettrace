@@ -1,0 +1,10 @@
+_SC_NPROCESSORS_ONLN = 1
+_SC_NPROCESSORS_CONF = 1
+get_nprocs() = 1
+get_nprocs_conf() = 1
+sched_getaffinity(128) = 8, CPU_COUNT = 1, CPU_ISSET(0) = 1
+sched_getaffinity(8) = 8, mask = 0x1
+sched_getaffinity(4) = -1, errno = 22
+sched_setaffinity(cpu0) = 0
+sched_setaffinity(cpu1) = -1, errno = 22
+sched_getcpu() = 0

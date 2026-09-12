@@ -1,0 +1,11 @@
+NONPORTABLE vendor_id = GenuineIntel
+NONPORTABLE cpu family = 6
+NONPORTABLE model name = QEMU Virtual CPU version 2.5+
+NONPORTABLE stepping = 3
+NONPORTABLE cpu MHz = 2000.000
+NONPORTABLE cache size = 16384 KB
+NONPORTABLE cpuid level = 13
+NONPORTABLE flags = fpu de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 syscall nx lm pni cx16 x2apic hypervisor lahf_lm
+NONPORTABLE bogomips = 4000.00
+NONPORTABLE clflush size = 64
+processor entries: 1

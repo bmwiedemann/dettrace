@@ -166,13 +166,15 @@ void seccomp::loadRules(bool debug, bool convertUids) {
   noIntercept(SYS_setfsgid);
   noIntercept(SYS_setfsuid);
   noIntercept(SYS_setuid);
-  // This seems to be, surprisingly, deterministic. The affinity is set/get by
-  // us so it should always be the same mask. User cannot actually observe
-  // differences.
-  noIntercept(SYS_sched_getaffinity);
-  noIntercept(SYS_sched_setaffinity);
-  // Pure query. The guest cannot change its scheduling policy, so this
-  // always returns the same value, like sched_getaffinity above.
+  // Nothing here ever set the affinity, so this handed the guest the host's
+  // mask and the host's cpumask_size(), i.e. the host's CPU count -- which is
+  // where glibc's get_nprocs(), and so nproc and
+  // sysconf(_SC_NPROCESSORS_ONLN), get their answer. Both are synthesized
+  // now, see sched_getaffinitySystemCall.
+  intercept(SYS_sched_getaffinity);
+  intercept(SYS_sched_setaffinity);
+  // Pure query. The guest cannot change its scheduling policy, so this really
+  // does always return the same value.
   noIntercept(SYS_sched_getscheduler);
   intercept(SYS_socket);
   noIntercept(SYS_sync);

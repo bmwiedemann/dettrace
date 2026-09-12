@@ -36,7 +36,9 @@ public:
       bool kernelPre4_12,
       unsigned prngSeed,
       logical_clock::time_point epoch,
-      bool allow_network = false);
+      bool allow_network = false,
+      bool with_proc_overrides = true,
+      bool hide_host_topology = true);
 
   /**
    * Reference to our global program logger.
@@ -149,6 +151,19 @@ public:
    * Allow non-deterministic socket/networking
    */
   bool allow_network;
+
+  /**
+   * False when the guest is not being shown the canonical machine: under
+   * --real-proc, and where there is no mount namespace to apply the file
+   * overrides in. Gates the syscall-level half of the canonical machine.
+   */
+  bool with_proc_overrides;
+
+  /**
+   * False only under --real-proc. Gates hiding the sysfs trees that describe
+   * the host's CPU topology, which needs no mount namespace.
+   */
+  bool hide_host_topology;
 
   /**
    * allow trap CPUID. this can be set to false

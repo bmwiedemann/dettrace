@@ -1,0 +1,9 @@
+/proc/sys/kernel/ostype = [Linux]
+/proc/sys/kernel/osrelease = [4.0]
+/proc/sys/kernel/version = [#1]
+/proc/version = [Linux version 4.0 (dettrace@reproducible) (gcc) #1]
+/proc/sys/kernel/random/boot_id = [00000000-0000-4000-8000-000000000000]
+/proc/uptime = [31536000.00 31520000.00]
+/proc/loadavg = [1.00 1.00 1.00 1/256 1000]
+uname release matches osrelease: 1
+uname version matches version: 1

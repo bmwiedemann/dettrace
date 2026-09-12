@@ -1,16 +1,15 @@
 #ifndef DETTRACE_SYSTEM_CALL_H
 #define DETTRACE_SYSTEM_CALL_H
 
-#include "globalState.hpp"
-#include "scheduler.hpp"
-#include "state.hpp"
-#include "util.hpp"
-#include "utilSystemCalls.hpp"
-
 #include <signal.h>
 #include <sys/syscall.h> /* For SYS_xxx definitions */
 
+#include "globalState.hpp"
+#include "scheduler.hpp"
+#include "state.hpp"
 #include "syscallCompat.hpp"
+#include "util.hpp"
+#include "utilSystemCalls.hpp"
 
 using namespace std;
 
@@ -572,6 +571,51 @@ public:
 
   const int syscallNumber = SYS_getcpu;
   const string syscallName = "getcpu";
+};
+// =======================================================================================
+/**
+ * int sched_getaffinity(pid_t pid, size_t cpusetsize, cpu_set_t *mask);
+ *
+ * This used not to be intercepted at all, on the theory that dettrace set the
+ * affinity itself. It never did, so the guest read the host's mask, and with
+ * it the host's CPU count: glibc answers get_nprocs(), and therefore nproc,
+ * sysconf(_SC_NPROCESSORS_ONLN), OpenMP and
+ * std::thread::hardware_concurrency(), from this call.
+ *
+ * Both the mask and the return value are synthesized. The return value
+ * matters as much as the mask: on success the kernel returns the number of
+ * bytes it wrote, which is min(cpusetsize, cpumask_size()), and cpumask_size()
+ * tracks the host's nr_cpu_ids. For the same reason the kernel's EINVAL
+ * threshold -- it refuses a cpusetsize below its own cpumask size -- is
+ * host dependent and has to be re-decided here.
+ */
+class sched_getaffinitySystemCall {
+public:
+  static bool handleDetPre(
+      globalState& gs, state& s, ptracer& t, scheduler& sched);
+  static void handleDetPost(
+      globalState& gs, state& s, ptracer& t, scheduler& sched);
+
+  const int syscallNumber = SYS_sched_getaffinity;
+  const string syscallName = "sched_getaffinity";
+};
+// =======================================================================================
+/**
+ * int sched_setaffinity(pid_t pid, size_t cpusetsize, const cpu_set_t *mask);
+ *
+ * Never reaches the kernel: it could widen the mask runTracee() pinned and so
+ * hand the host's topology back to the guest through sched_getaffinity and
+ * /proc/self/status. Answered the way a uniprocessor kernel would.
+ */
+class sched_setaffinitySystemCall {
+public:
+  static bool handleDetPre(
+      globalState& gs, state& s, ptracer& t, scheduler& sched);
+  static void handleDetPost(
+      globalState& gs, state& s, ptracer& t, scheduler& sched);
+
+  const int syscallNumber = SYS_sched_setaffinity;
+  const string syscallName = "sched_setaffinity";
 };
 // =======================================================================================
 /**

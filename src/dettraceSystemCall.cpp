@@ -985,6 +985,127 @@ void getcpuSystemCall::handleDetPost(
   return;
 }
 // =======================================================================================
+// Both halves of this pair are emulated outright rather than letting the
+// kernel run and patching the result afterwards. The kernel's answers are host
+// dependent in two ways a post-hook cannot repair: the success return value is
+// min(cpusetsize, cpumask_size()), and the EINVAL it raises for a cpusetsize
+// below cpumask_size() -- both of which follow the host's nr_cpu_ids. The
+// guest is told about the canonical uniprocessor instead, so neither the mask,
+// nor the length, nor the error depends on where it ran.
+//
+// The pid argument is ignored: every task on the canonical machine has the
+// same affinity. The ESRCH a real kernel raises for an unknown pid is
+// therefore not reproduced, which would need the pid mapper and which nothing
+// depends on for determinism.
+bool sched_getaffinitySystemCall::handleDetPre(
+    globalState& gs, state& s, ptracer& t, scheduler& sched) {
+  if (!gs.with_proc_overrides) {
+    // --real-proc: the guest asked for the host's real machine.
+    return false;
+  }
+
+  // The kernel's len is an unsigned int, so a 64-bit argument is truncated
+  // before it is looked at.
+  unsigned int cpusetsize = (unsigned int)t.arg2();
+  unsigned long* maskPtr = (unsigned long*)t.arg3();
+
+  // Deliberately in 32-bit arithmetic, wraparound and all: the kernel's test
+  // is `(len * BITS_PER_BYTE) < nr_cpu_ids` on an unsigned int, so a len that
+  // is a multiple of 2^29 overflows to 0 and is rejected however large it is.
+  if ((cpusetsize * 8u) < DETTRACE_NR_CPUS ||
+      (cpusetsize & (sizeof(unsigned long) - 1)) != 0) {
+    failSystemCall(gs, s, t, EINVAL);
+    return false;
+  }
+  if (maskPtr == nullptr) {
+    failSystemCall(gs, s, t, EFAULT);
+    return false;
+  }
+
+  unsigned long mask = DETTRACE_CPU_MASK_WORD0;
+  struct iovec local = {&mask, sizeof(mask)};
+  struct iovec remote = {maskPtr, sizeof(mask)};
+
+  // Raw process_vm_writev, not writeVmTraceeRaw: the kernel never ran, so
+  // nothing has validated this pointer, and an unwritable one has to become
+  // the guest's EFAULT rather than dettrace's abort.
+  if (process_vm_writev(t.getPid(), &local, 1, &remote, 1, 0) !=
+      (ssize_t)sizeof(mask)) {
+    failSystemCall(gs, s, t, EFAULT);
+    return false;
+  }
+  t.writeVmCalls++;
+
+  // Success returns the number of bytes written, not zero. glibc zero-fills
+  // the caller's buffer past that point, so a cpu_set_t comes back with
+  // exactly bit 0 set.
+  cancelSystemCall(gs, s, t);
+  t.setReturnRegister(sizeof(unsigned long));
+  return false;
+}
+
+void sched_getaffinitySystemCall::handleDetPost(
+    globalState& gs, state& s, ptracer& t, scheduler& sched) {
+  // The pre-hook answers every case and returns false, so this is unreachable
+  // on any kernel >= 4.8. On older ones handlePreSystemCall forces the
+  // post-hook to run anyway, so it has to be a no-op rather than an error:
+  // the return value the pre-hook set is already in place.
+  return;
+}
+// =======================================================================================
+bool sched_setaffinitySystemCall::handleDetPre(
+    globalState& gs, state& s, ptracer& t, scheduler& sched) {
+  if (!gs.with_proc_overrides) {
+    return false;
+  }
+
+  // Truncated to an unsigned int first, as the kernel's prototype does.
+  unsigned int cpusetsize = (unsigned int)t.arg2();
+  unsigned long* maskPtr = (unsigned long*)t.arg3();
+
+  // The kernel zero-fills a short mask and truncates a long one, so only the
+  // first word can name a CPU this machine has. A zero length reads nothing
+  // and leaves the mask empty, which is why it has to be answered EINVAL
+  // below rather than EFAULT here -- copy_from_user of zero bytes never
+  // faults, even from a null pointer.
+  unsigned long requested = 0;
+  size_t toRead = min((size_t)cpusetsize, sizeof(requested));
+  if (toRead > 0) {
+    if (maskPtr == nullptr) {
+      failSystemCall(gs, s, t, EFAULT);
+      return false;
+    }
+    ssize_t got = readVmTraceeRaw(
+        traceePtr<unsigned long>(maskPtr), &requested, toRead, s.traceePid);
+    if (got != (ssize_t)toRead) {
+      failSystemCall(gs, s, t, EFAULT);
+      return false;
+    }
+  }
+
+  if ((requested & DETTRACE_CPU_MASK_WORD0) == 0) {
+    // What a real kernel says when the mask names no usable CPU.
+    failSystemCall(gs, s, t, EINVAL);
+    return false;
+  }
+
+  // runTracee() already pinned us there, so this is a successful no-op. It
+  // must not reach the kernel: widening the real mask would hand the host's
+  // topology back through sched_getaffinity and /proc/self/status.
+  cancelSystemCall(gs, s, t);
+  t.setReturnRegister(0);
+  return false;
+}
+
+void sched_setaffinitySystemCall::handleDetPost(
+    globalState& gs, state& s, ptracer& t, scheduler& sched) {
+  // The pre-hook answers every case and returns false, so this is unreachable
+  // on any kernel >= 4.8. On older ones handlePreSystemCall forces the
+  // post-hook to run anyway, so it has to be a no-op rather than an error:
+  // the return value the pre-hook set is already in place.
+  return;
+}
+// =======================================================================================
 bool getrandomSystemCall::handleDetPre(
     globalState& gs, state& s, ptracer& t, scheduler& sched) {
   return true;
@@ -1554,9 +1675,11 @@ void openSystemCall::handleDetPost(
 bool openatSystemCall::handleDetPre(
     globalState& gs, state& s, ptracer& t, scheduler& sched) {
   if ((char*)t.arg2() != nullptr) {
-    handlePreOpens(
+    // Propagate the verdict, as openSystemCall does: handlePreOpens cancels
+    // the system call for the paths it hides, and there is no post-hook left
+    // to run once it has.
+    return handlePreOpens(
         gs, s, t, t.arg1(), traceePtr<char>{(char*)t.arg2()}, t.arg3());
-    return true;
   }
   return false;
 }
@@ -3192,6 +3315,8 @@ void unameSystemCall::handleDetPost(
     // https://stackoverflow.com/questions/3553296/c-sizeof-single-struct-member
     const uint32_t MEMBER_LENGTH = 60;
     if (sizeof(((struct utsname*)0)->sysname) < MEMBER_LENGTH ||
+        sizeof(((struct utsname*)0)->nodename) < MEMBER_LENGTH ||
+        sizeof(((struct utsname*)0)->domainname) < MEMBER_LENGTH ||
         sizeof(((struct utsname*)0)->release) < MEMBER_LENGTH ||
         sizeof(((struct utsname*)0)->version) < MEMBER_LENGTH ||
         sizeof(((struct utsname*)0)->machine) < MEMBER_LENGTH) {
@@ -3199,10 +3324,16 @@ void unameSystemCall::handleDetPost(
           "unameSystemCall::handleDetPost: struct utsname members too small!");
     }
 
-    // NB: this is our standard environment
-    strncpy(myUts.sysname, "Linux", MEMBER_LENGTH);
-    strncpy(myUts.release, "4.0", MEMBER_LENGTH);
-    strncpy(myUts.version, "#1", MEMBER_LENGTH);
+    // NB: this is our standard environment. nodename and domainname are
+    // overwritten from the same constants runTracee() hands to sethostname(2),
+    // rather than read back out of the UTS namespace, so that uname(2) stays
+    // deterministic even under --host-utsns, where there is no namespace of
+    // ours to read.
+    strncpy(myUts.sysname, DETTRACE_UTS_SYSNAME, MEMBER_LENGTH);
+    strncpy(myUts.nodename, DETTRACE_HOSTNAME, MEMBER_LENGTH);
+    strncpy(myUts.domainname, DETTRACE_DOMAINNAME, MEMBER_LENGTH);
+    strncpy(myUts.release, DETTRACE_UTS_RELEASE, MEMBER_LENGTH);
+    strncpy(myUts.version, DETTRACE_UTS_VERSION, MEMBER_LENGTH);
 #if defined(__aarch64__)
     strncpy(myUts.machine, "aarch64", MEMBER_LENGTH);
 #elif defined(__powerpc64__)
