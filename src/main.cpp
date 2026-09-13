@@ -32,10 +32,16 @@
 // contents have to agree with the canonical CPUID we report in
 // src/execution.cpp, so ship one file per architecture rather than trying to
 // synthesize one.
-#if defined(__x86_64__)
+#if defined(__x86_64__) || defined(__i386__)
+// A 32-bit kernel shows the same lines and flags (including lm) for the
+// CPU the canonical CPUID describes, so i386 shares the file.
 #define DETTRACE_CPUINFO "/proc/cpuinfo.x86_64"
 #elif defined(__aarch64__)
 #define DETTRACE_CPUINFO "/proc/cpuinfo.aarch64"
+#elif defined(__arm__) && __ARM_ARCH >= 7
+#define DETTRACE_CPUINFO "/proc/cpuinfo.armv7l"
+#elif defined(__arm__)
+#define DETTRACE_CPUINFO "/proc/cpuinfo.armv6l"
 #elif defined(__powerpc64__)
 #define DETTRACE_CPUINFO "/proc/cpuinfo.ppc64le"
 #elif defined(__s390x__)

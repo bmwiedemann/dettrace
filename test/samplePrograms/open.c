@@ -39,9 +39,10 @@ int main(){
   struct stat stat2;
   withError(fstat(fd2, &stat2), "fstat");
 
-  printf("Full mtime1, bytes: ");
+  // The raw bytes depend on the word size (time_t is 32 bits on i386/arm).
+  printf("NONPORTABLE Full mtime1, bytes: ");
   print_bytes((char*)& stat1.st_mtim, sizeof(struct timespec));
-  printf("Full mtime2, bytes: ");
+  printf("NONPORTABLE Full mtime2, bytes: ");
   print_bytes((char*)& stat2.st_mtim, sizeof(struct timespec));
   
   printf("mtime1 tv_sec = %ld\n  tv_nsec = %ld\n",

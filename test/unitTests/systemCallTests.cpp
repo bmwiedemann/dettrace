@@ -208,10 +208,10 @@ TEST_CASE("sysinfo", "sysinfo"){
   struct sysinfo info;
   sysinfo(&info);
   REQUIRE(info.uptime == 365LL * 24 * 3600);
-  REQUIRE(info.totalram == 32ULL << 32);
+  REQUIRE((unsigned long long)info.totalram * info.mem_unit == 32ULL << 32);
   REQUIRE(info.freehigh == 0);
   REQUIRE(info.loads[2] == 65536);
-  REQUIRE(info.sharedram == 1ULL << 30);
+  REQUIRE((unsigned long long)info.sharedram * info.mem_unit == 1ULL << 30);
   REQUIRE(info.totalswap == 0);
   REQUIRE(info.procs == 256);
   REQUIRE(info.freeswap == 0);
@@ -235,6 +235,12 @@ TEST_CASE("uname", "uname"){
   REQUIRE(strcmp(buf.version, "#1") == 0);
 #if defined(__aarch64__)
   REQUIRE(strcmp(buf.machine, "aarch64") == 0);
+#elif defined(__arm__) && __ARM_ARCH >= 7
+  REQUIRE(strcmp(buf.machine, "armv7l") == 0);
+#elif defined(__arm__)
+  REQUIRE(strcmp(buf.machine, "armv6l") == 0);
+#elif defined(__i386__)
+  REQUIRE(strcmp(buf.machine, "i686") == 0);
 #elif defined(__powerpc64__)
   REQUIRE(strcmp(buf.machine, "ppc64le") == 0);
 #elif defined(__s390x__)
@@ -299,8 +305,9 @@ TEST_CASE("uid/gid", "uid/gid"){
 TEST_CASE("times", "times"){
   struct tms buf;
   clock_t time = times(&buf);
-  // Nobody.
-  REQUIRE(time == 744847200000038);
+  // Nobody. clock_t is 32 bits on i386 and arm, where the kernel (and so
+  // dettrace) hands back the low half.
+  REQUIRE(time == (clock_t)744847200000038LL);
   REQUIRE(buf.tms_utime == 0);
   REQUIRE(buf.tms_stime == 0);
   REQUIRE(buf.tms_cutime == 0);

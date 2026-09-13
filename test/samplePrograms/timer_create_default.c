@@ -79,7 +79,7 @@ int main() {
   // for example, 0x7fffffffeba8 vs 0x7fffffffebc0
   // here:   https://dev.azure.com/upenn-acg/detTrace/_build/results?buildId=512&view=logs&j=12f1170f-54f2-53f3-20dd-22fc7dff55f9&t=bd05475d-acb5-5619-3ccb-c46842dbc997
   // But these surely have different fingerprints/hashes, because there must be different input files in the base image.
-  printf("  (NONPORTABLE) residing at address %p, size %ld\n",
+  printf("  (NONPORTABLE) residing at address %p, size %zu\n",
 	 &timerid, sizeof(timerid));
   
   struct itimerspec ts;

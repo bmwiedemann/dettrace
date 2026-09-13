@@ -15,6 +15,7 @@
 #define _GNU_SOURCE
 #include <errno.h>
 #include <sched.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/syscall.h>
@@ -36,12 +37,16 @@ int main(void) {
       sizeof(set), rc, CPU_COUNT(&set), CPU_ISSET(0, &set) ? 1 : 0);
 
   // ... and with the smallest mask the kernel accepts, where the EINVAL
-  // threshold used to depend on the host.
-  unsigned long word = 0;
+  // threshold used to depend on the host (dettrace's canonical machine has
+  // 64-bit cpumask words on every architecture).
+  uint64_t word = 0;
   rc = syscall(SYS_sched_getaffinity, 0, sizeof(word), &word);
-  printf("sched_getaffinity(%zu) = %ld, mask = 0x%lx\n", sizeof(word), rc, word);
+  printf(
+      "sched_getaffinity(%zu) = %ld, mask = 0x%llx\n", sizeof(word), rc,
+      (unsigned long long)word);
 
-  // Too small for any kernel: must be EINVAL everywhere.
+  // Too small for a 64-bit kernel's cpumask word (a 32-bit kernel would take
+  // it): dettrace's canonical machine makes it EINVAL everywhere.
   unsigned int half = 0;
   errno = 0;
   rc = syscall(SYS_sched_getaffinity, 0, sizeof(half), &half);

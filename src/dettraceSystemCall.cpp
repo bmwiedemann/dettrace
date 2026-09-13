@@ -1,5 +1,5 @@
 #include <arpa/inet.h>
-#if defined(__x86_64__)
+#if defined(__x86_64__) || defined(__i386__)
 #include <asm/prctl.h>
 #endif
 #include <asm/termbits.h> /* struct termios2 for TCGETS2 */
@@ -31,6 +31,7 @@
 #include <linux/fs.h>
 #include <linux/futex.h>
 #include <linux/rtc.h>
+#include <linux/time_types.h> /* struct __kernel_timespec */
 #include <sys/resource.h>
 #include <sys/sysinfo.h>
 #include <sys/time.h>
@@ -54,6 +55,86 @@
 using namespace std;
 
 static bool fd_is_nonblocking(state& s, int fd);
+
+// =======================================================================================
+// struct timespec as the tracee sees it. The 32-bit architectures have
+// both the *_time64 system calls glibc uses there since 2.34, which take
+// struct __kernel_timespec (two 64-bit fields), and the older ones taking
+// the architecture's struct timespec (two 32-bit fields there). The
+// handlers are shared between the two, so they read and write timespecs
+// through these helpers, which pick the layout by the system call being
+// handled. On 64-bit architectures both layouts are the same.
+static bool isTime64Syscall(ptracer& t) {
+  switch ((long)t.getSystemCallNumber()) {
+#ifdef SYS_clock_gettime64
+  case SYS_clock_gettime64:
+  case SYS_clock_nanosleep_time64:
+  case SYS_futex_time64:
+  case SYS_ppoll_time64:
+  case SYS_pselect6_time64:
+  case SYS_rt_sigtimedwait_time64:
+  case SYS_utimensat_time64:
+  case SYS_timer_gettime64:
+  case SYS_timer_settime64:
+  case SYS_timerfd_gettime64:
+  case SYS_timerfd_settime64:
+    return true;
+#endif
+  default:
+    return false;
+  }
+}
+
+static size_t traceeTimespecSize(ptracer& t) {
+  return isTime64Syscall(t) ? sizeof(struct __kernel_timespec)
+                            : sizeof(struct timespec);
+}
+
+static struct timespec readTraceeTimespec(
+    ptracer& t, uint64_t addr, pid_t pid) {
+  struct timespec ts;
+  if (isTime64Syscall(t)) {
+    struct __kernel_timespec kts = t.readFromTracee(
+        traceePtr<struct __kernel_timespec>((struct __kernel_timespec*)addr),
+        pid);
+    ts.tv_sec = kts.tv_sec;
+    ts.tv_nsec = kts.tv_nsec;
+  } else {
+    ts = t.readFromTracee(
+        traceePtr<struct timespec>((struct timespec*)addr), pid);
+  }
+  return ts;
+}
+
+static void writeTraceeTimespec(
+    ptracer& t, uint64_t addr, const struct timespec& ts, pid_t pid) {
+  if (isTime64Syscall(t)) {
+    struct __kernel_timespec kts = {};
+    kts.tv_sec = ts.tv_sec;
+    kts.tv_nsec = ts.tv_nsec;
+    t.writeToTracee(
+        traceePtr<struct __kernel_timespec>((struct __kernel_timespec*)addr),
+        kts, pid);
+  } else {
+    t.writeToTracee(
+        traceePtr<struct timespec>((struct timespec*)addr), ts, pid);
+  }
+}
+
+// struct itimerspec is two of them.
+static struct itimerspec readTraceeItimerspec(
+    ptracer& t, uint64_t addr, pid_t pid) {
+  struct itimerspec its;
+  its.it_interval = readTraceeTimespec(t, addr, pid);
+  its.it_value = readTraceeTimespec(t, addr + traceeTimespecSize(t), pid);
+  return its;
+}
+
+static void writeTraceeItimerspec(
+    ptracer& t, uint64_t addr, const struct itimerspec& its, pid_t pid) {
+  writeTraceeTimespec(t, addr, its.it_interval, pid);
+  writeTraceeTimespec(t, addr + traceeTimespecSize(t), its.it_value, pid);
+}
 
 // =======================================================================================
 bool accessSystemCall::handleDetPre(
@@ -164,11 +245,11 @@ bool clock_gettimeSystemCall::handleDetPre(
 void clock_gettimeSystemCall::handleDetPost(
     globalState& gs, state& s, ptracer& t, scheduler& sched) {
   gs.timeCalls++;
-  struct timespec* tp = (struct timespec*)t.arg2();
+  uint64_t tp = t.arg2();
 
-  if (tp != nullptr) {
+  if (tp != 0) {
     const auto myTp = logical_clock::to_timespec(s.getLogicalTime());
-    t.writeToTracee(traceePtr<struct timespec>(tp), myTp, t.getPid());
+    writeTraceeTimespec(t, tp, myTp, t.getPid());
     s.incrementTime();
     // preempt current task avoid some task busy checking current time
     // Since preemption can happen any place in Linux, we are not really
@@ -729,10 +810,13 @@ void fstatSystemCall::handleDetPost(
 #define DEVFS_SUPER_MAGIC 0x1373
 #define DEVPTS_SUPER_MAGIC 0x1cd1
 
-static void interceptStatfs(traceePtr<struct statfs> rptr, ptracer& t) {
+// The kernel fills struct statfs for statfs/fstatfs and struct statfs64
+// for statfs64/fstatfs64; the two only differ on 32-bit architectures.
+template <typename StatfsT>
+static void interceptStatfs(traceePtr<StatfsT> rptr, ptracer& t) {
   auto st = t.readFromTracee(rptr, t.getPid());
   if (st.f_type != DEVPTS_SUPER_MAGIC && st.f_type != DEVFS_SUPER_MAGIC) {
-    struct statfs stats;
+    StatfsT stats;
     memset(&stats, 0, sizeof(stats));
     zeroOutStatfs(stats);
     t.writeToTracee(rptr, stats, t.getPid());
@@ -841,7 +925,7 @@ bool futexSystemCall::handleDetPre(
           Importance::extra,
           "timeout null, writing our data to mmaped page...\n");
       timespec* newAddress = (timespec*)s.mmapMemory.getAddr().ptr;
-      t.writeToTracee(traceePtr<timespec>(newAddress), ourTimeout, s.traceePid);
+      writeTraceeTimespec(t, (uint64_t)newAddress, ourTimeout, s.traceePid);
 
       // Point system call to new address.
       t.writeArg4((uint64_t)newAddress);
@@ -849,13 +933,13 @@ bool futexSystemCall::handleDetPre(
     } else {
       if (gs.log.getDebugLevel() > 0) {
         timespec timeout =
-            t.readFromTracee(traceePtr<timespec>(timeoutPtr), t.getPid());
+            readTraceeTimespec(t, (uint64_t)timeoutPtr, t.getPid());
         gs.log.writeToLog(
             Importance::info,
             "Using original timeout value: (s = %d, ns = %d)\n", timeout.tv_sec,
             timeout.tv_nsec);
       }
-      t.writeToTracee(traceePtr<timespec>(timeoutPtr), ourTimeout, s.traceePid);
+      writeTraceeTimespec(t, (uint64_t)timeoutPtr, ourTimeout, s.traceePid);
       s.userDefinedTimeout = true;
     }
   }
@@ -1007,13 +1091,17 @@ bool sched_getaffinitySystemCall::handleDetPre(
   // The kernel's len is an unsigned int, so a 64-bit argument is truncated
   // before it is looked at.
   unsigned int cpusetsize = (unsigned int)t.arg2();
-  unsigned long* maskPtr = (unsigned long*)t.arg3();
+  uint64_t* maskPtr = (uint64_t*)t.arg3();
 
   // Deliberately in 32-bit arithmetic, wraparound and all: the kernel's test
   // is `(len * BITS_PER_BYTE) < nr_cpu_ids` on an unsigned int, so a len that
   // is a multiple of 2^29 overflows to 0 and is rejected however large it is.
+  // The canonical machine's kernel has 64-bit cpumask words, also for the
+  // 32-bit architectures: that is what their builds see on OBS (32-bit
+  // processes on 64-bit kernels), and a 32-bit kernel's 4 must not show
+  // through as a difference.
   if ((cpusetsize * 8u) < DETTRACE_NR_CPUS ||
-      (cpusetsize & (sizeof(unsigned long) - 1)) != 0) {
+      (cpusetsize & (sizeof(uint64_t) - 1)) != 0) {
     failSystemCall(gs, s, t, EINVAL);
     return false;
   }
@@ -1022,7 +1110,7 @@ bool sched_getaffinitySystemCall::handleDetPre(
     return false;
   }
 
-  unsigned long mask = DETTRACE_CPU_MASK_WORD0;
+  uint64_t mask = DETTRACE_CPU_MASK_WORD0;
   struct iovec local = {&mask, sizeof(mask)};
   struct iovec remote = {maskPtr, sizeof(mask)};
 
@@ -1040,7 +1128,7 @@ bool sched_getaffinitySystemCall::handleDetPre(
   // the caller's buffer past that point, so a cpu_set_t comes back with
   // exactly bit 0 set.
   cancelSystemCall(gs, s, t);
-  t.setReturnRegister(sizeof(unsigned long));
+  t.setReturnRegister(sizeof(uint64_t));
   return false;
 }
 
@@ -1061,14 +1149,14 @@ bool sched_setaffinitySystemCall::handleDetPre(
 
   // Truncated to an unsigned int first, as the kernel's prototype does.
   unsigned int cpusetsize = (unsigned int)t.arg2();
-  unsigned long* maskPtr = (unsigned long*)t.arg3();
+  uint64_t* maskPtr = (uint64_t*)t.arg3();
 
   // The kernel zero-fills a short mask and truncates a long one, so only the
-  // first word can name a CPU this machine has. A zero length reads nothing
-  // and leaves the mask empty, which is why it has to be answered EINVAL
-  // below rather than EFAULT here -- copy_from_user of zero bytes never
-  // faults, even from a null pointer.
-  unsigned long requested = 0;
+  // first word (64 bits, see sched_getaffinity) can name a CPU this machine
+  // has. A zero length reads nothing and leaves the mask empty, which is why
+  // it has to be answered EINVAL below rather than EFAULT here --
+  // copy_from_user of zero bytes never faults, even from a null pointer.
+  uint64_t requested = 0;
   size_t toRead = min((size_t)cpusetsize, sizeof(requested));
   if (toRead > 0) {
     if (maskPtr == nullptr) {
@@ -1076,7 +1164,7 @@ bool sched_setaffinitySystemCall::handleDetPre(
       return false;
     }
     ssize_t got = readVmTraceeRaw(
-        traceePtr<unsigned long>(maskPtr), &requested, toRead, s.traceePid);
+        traceePtr<uint64_t>(maskPtr), &requested, toRead, s.traceePid);
     if (got != (ssize_t)toRead) {
       failSystemCall(gs, s, t, EFAULT);
       return false;
@@ -1248,7 +1336,8 @@ void gettimeofdaySystemCall::handleDetPost(
 // =======================================================================================
 bool ioctlSystemCall::handleDetPre(
     globalState& gs, state& s, ptracer& t, scheduler& sched) {
-  long request = t.arg2();
+  // The _IOR() requests have bit 31 set, keep them positive on 32-bit.
+  unsigned long request = t.arg2();
   switch (request) {
   // non-supported rtc ops
   case RTC_AIE_ON:
@@ -1455,7 +1544,7 @@ bool nanosleepSystemCall::handleDetPre(
     struct timespec* myReq = (timespec*)s.mmapMemory.getAddr().ptr;
     struct timespec localReq = {0};
 
-    t.writeToTracee(traceePtr<struct timespec>(myReq), localReq, s.traceePid);
+    writeTraceeTimespec(t, (uint64_t)myReq, localReq, s.traceePid);
     t.writeArg1((uint64_t)myReq);
   }
   return false;
@@ -1473,7 +1562,7 @@ bool clock_nanosleepSystemCall::handleDetPre(
     struct timespec* myReq = (timespec*)s.mmapMemory.getAddr().ptr;
     struct timespec localReq = {0};
 
-    t.writeToTracee(traceePtr<struct timespec>(myReq), localReq, s.traceePid);
+    writeTraceeTimespec(t, (uint64_t)myReq, localReq, s.traceePid);
     t.writeArg3((uint64_t)myReq);
     // A zero request only returns at once when it is relative; drop
     // TIMER_ABSTIME, an absolute zero would wait until the epoch.
@@ -1591,14 +1680,14 @@ void newfstatatSystemCall::handleDetPost(
     s.syscallInjected = false;
 
     if (t.getReturnValue() >= 0) {
-      struct stat* statbufPtr = (struct stat*)t.arg3();
-      struct stat statbuf =
-          t.readFromTracee(traceePtr<struct stat>(statbufPtr), s.traceePid);
+      struct stat64* statbufPtr = (struct stat64*)t.arg3();
+      struct stat64 statbuf =
+          t.readFromTracee(traceePtr<struct stat64>(statbufPtr), s.traceePid);
 
       gs.log.writeToLog(
           Importance::extra,
-          "marking (device,inode) = (%lu,%lu) for deletion\n", statbuf.st_dev,
-          statbuf.st_ino);
+          "marking (device,inode) = (%lu,%lu) for deletion\n",
+          (unsigned long)statbuf.st_dev, (unsigned long)statbuf.st_ino);
 
       s.inodeToDelete = statbuf.st_ino;
     } else {
@@ -1829,12 +1918,10 @@ bool pselect6SystemCall::handleDetPre(
   if (timeoutPtr == nullptr) {
     // Has to be created in memory.
     struct timespec* newAddr = (struct timespec*)s.mmapMemory.getAddr().ptr;
-    t.writeToTracee(
-        traceePtr<struct timespec>(newAddr), ourTimeout, s.traceePid);
+    writeTraceeTimespec(t, (uint64_t)newAddr, ourTimeout, s.traceePid);
     t.writeArg5((uint64_t)newAddr);
   } else {
-    t.writeToTracee(
-        traceePtr<struct timespec>(timeoutPtr), ourTimeout, s.traceePid);
+    writeTraceeTimespec(t, (uint64_t)timeoutPtr, ourTimeout, s.traceePid);
     s.userDefinedTimeout = true;
   }
 
@@ -1932,8 +2019,8 @@ bool ppollSystemCall::handleDetPre(
     if (timeoutPtr == nullptr) {
       s.poll_retry_maximum = LONG_MAX;
     } else {
-      struct timespec ts = t.readFromTracee(
-          traceePtr<struct timespec>(timeoutPtr), s.traceePid);
+      struct timespec ts =
+          readTraceeTimespec(t, (uint64_t)timeoutPtr, s.traceePid);
       s.poll_retry_maximum = ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
     }
   }
@@ -1943,7 +2030,7 @@ bool ppollSystemCall::handleDetPre(
   // tracee's (possibly read-only) struct untouched.
   struct timespec* newAddr = (struct timespec*)s.mmapMemory.getAddr().ptr;
   struct timespec ourTimeout = {0};
-  t.writeToTracee(traceePtr<struct timespec>(newAddr), ourTimeout, s.traceePid);
+  writeTraceeTimespec(t, (uint64_t)newAddr, ourTimeout, s.traceePid);
   t.writeArg3((uint64_t)newAddr);
 
   return true;
@@ -2052,9 +2139,17 @@ void readSystemCall::handleDetPost(
   };
 
   if (s.fd_is_timerfd(fd)) {
+    // A timerfd read returns the 8 byte expiration count, and fails a
+    // smaller buffer like the kernel does instead of overrunning it.
+    if ((size_t)t.arg3() < sizeof(uint64_t)) {
+      s.totalBytes = 0;
+      resetState();
+      t.setReturnRegister((uint64_t)-EINVAL);
+      return;
+    }
     t.writeToTracee(
-        traceePtr<unsigned long>((unsigned long*)t.arg2()), 1UL, s.traceePid);
-    s.totalBytes = sizeof(unsigned long);
+        traceePtr<uint64_t>((uint64_t*)t.arg2()), (uint64_t)1, s.traceePid);
+    s.totalBytes = sizeof(uint64_t);
     resetState();
     sched.preemptAndScheduleNext();
     return;
@@ -2254,8 +2349,8 @@ void rt_sigprocmaskSystemCall::handleDetPost(
     globalState& gs, state& s, ptracer& t, scheduler& sched) {
   if (s.syscallInjected) {
     s.syscallInjected = false;
-    traceePtr<unsigned long> oldset = traceePtr<unsigned long>(
-        (unsigned long*)(s.mmapMemory.getAddr().ptr) + 1);
+    traceePtr<uint64_t> oldset =
+        traceePtr<uint64_t>((uint64_t*)(s.mmapMemory.getAddr().ptr) + 1);
     t.writeArg1(SIG_SETMASK);
     t.writeArg2((uint64_t)oldset.ptr);
     t.writeArg3(0);
@@ -2342,8 +2437,8 @@ void rt_sigactionSystemCall::handleDetPost(
 }
 
 struct PendingSignalInfo {
-  unsigned long pending;
-  unsigned long blocked;
+  uint64_t pending; /* the kernel's sigset_t, 64 bits on every arch */
+  uint64_t blocked;
 };
 
 int getPendingSignalInfo(pid_t pid, struct PendingSignalInfo* info) {
@@ -2366,9 +2461,9 @@ int getPendingSignalInfo(pid_t pid, struct PendingSignalInfo* info) {
     p = strsep(&q, "\n");
     if (!p) break;
     if (strncmp(p, "SigPnd:\t", 8) == 0) {
-      info->pending = strtoul(8 + p, NULL, 16);
+      info->pending = strtoull(8 + p, NULL, 16);
     } else if (strncmp(p, "SigBlk:\t", 8) == 0) {
-      info->blocked = strtoul(8 + p, NULL, 16);
+      info->blocked = strtoull(8 + p, NULL, 16);
       break;
     }
   }
@@ -2392,8 +2487,7 @@ bool rt_sigtimedwaitSystemCall::handleDetPre(
   if (timeoutPtr == nullptr) {
     // Has to be created in memory.
     struct timespec* newAddr = (struct timespec*)s.mmapMemory.getAddr().ptr;
-    t.writeToTracee(
-        traceePtr<struct timespec>(newAddr), ourTimeout, s.traceePid);
+    writeTraceeTimespec(t, (uint64_t)newAddr, ourTimeout, s.traceePid);
 
     t.writeArg3((uint64_t)newAddr);
   } else {
@@ -2401,8 +2495,7 @@ bool rt_sigtimedwaitSystemCall::handleDetPre(
     // jld: useless read from tracee memory
     // timeval timeout = t.readFromTracee(traceePtr<timeval>(timeoutPtr),
     // t.getPid());
-    t.writeToTracee(
-        traceePtr<struct timespec>(timeoutPtr), ourTimeout, s.traceePid);
+    writeTraceeTimespec(t, (uint64_t)timeoutPtr, ourTimeout, s.traceePid);
     s.userDefinedTimeout = true;
   }
 
@@ -2437,12 +2530,15 @@ void rt_sigtimedwaitSystemCall::handleDetPost(
 // TODO
 bool rt_sigsuspendSystemCall::handleDetPre(
     globalState& gs, state& s, ptracer& t, scheduler& sched) {
-  unsigned long mask;
+  // The kernel's sigset_t is 64 bits wide on every architecture (the
+  // calls take sigsetsize 8), also where unsigned long is 32 bits.
+  uint64_t mask;
 
-  traceePtr<unsigned long> rptr =
-      traceePtr<unsigned long>((unsigned long*)t.arg1());
+  traceePtr<uint64_t> rptr = traceePtr<uint64_t>((uint64_t*)t.arg1());
   mask = t.readFromTracee(rptr, t.getPid());
-  gs.log.writeToLog(Importance::info, "rt_sigsuspend, mask = 0x%lx\n", mask);
+  gs.log.writeToLog(
+      Importance::info, "rt_sigsuspend, mask = 0x%llx\n",
+      (unsigned long long)mask);
 
   struct PendingSignalInfo info = {
       0,
@@ -2453,14 +2549,14 @@ bool rt_sigsuspendSystemCall::handleDetPre(
   cancelSystemCall(gs, s, t);
 
   getPendingSignalInfo(t.getPid(), &info);
-  unsigned long unmask = info.pending & ~mask;
+  uint64_t unmask = info.pending & ~mask;
   if (unmask != 0) {
     s.syscallInjected = true;
     s.originalArg1 = t.arg1();
-    traceePtr<unsigned long> set =
-        traceePtr<unsigned long>((unsigned long*)(s.mmapMemory.getAddr().ptr));
-    traceePtr<unsigned long> oldset = traceePtr<unsigned long>(
-        (unsigned long*)(s.mmapMemory.getAddr().ptr) + 1);
+    traceePtr<uint64_t> set =
+        traceePtr<uint64_t>((uint64_t*)(s.mmapMemory.getAddr().ptr));
+    traceePtr<uint64_t> oldset =
+        traceePtr<uint64_t>((uint64_t*)(s.mmapMemory.getAddr().ptr) + 1);
     t.writeToTracee(set, unmask, t.getPid());
     t.writeArg1(SIG_UNBLOCK);
     t.writeArg2((uint64_t)set.ptr);
@@ -2719,14 +2815,14 @@ bool statfs64SystemCall::handleDetPre(
 void statfs64SystemCall::handleDetPost(
     globalState& gs, state& s, ptracer& t, scheduler& sched) {
   // Shared by statfs64 and fstatfs64: the buffer is the third argument.
-  struct statfs* statfsPtr = (struct statfs*)t.arg3();
+  struct statfs64* statfsPtr = (struct statfs64*)t.arg3();
   if (statfsPtr == nullptr) {
     gs.log.writeToLog(Importance::info, "statfs64: statbuf null.\n");
     return;
   }
 
   if (t.getReturnValue() == 0) {
-    interceptStatfs(traceePtr<struct statfs>(statfsPtr), t);
+    interceptStatfs(traceePtr<struct statfs64>(statfsPtr), t);
   }
 
   return;
@@ -2764,16 +2860,19 @@ void sysinfoSystemCall::handleDetPost(
   info.uptime = 365LL * 24 * 3600;
   // total = used + free + buff/cache
   // buff/cache includes shared
-  info.totalram = 32ULL << 32;
-  info.freeram = 31ULL << 32;
-  info.sharedram = 1ULL << 30;
-  info.bufferram = 1ULL << 32;
+  // The memory fields are unsigned long: 128 GiB does not fit the 32-bit
+  // ones, so those count pages, like the kernel does when it has to.
+  const unsigned long unit = sizeof(info.totalram) < 8 ? 4096 : 1;
+  info.totalram = (32ULL << 32) / unit;
+  info.freeram = (31ULL << 32) / unit;
+  info.sharedram = (1ULL << 30) / unit;
+  info.bufferram = (1ULL << 32) / unit;
   info.totalswap = 0;
   info.freeswap = 0;
   info.procs = 256;
   info.totalhigh = 0;
   info.freehigh = 0;
-  info.mem_unit = 1;
+  info.mem_unit = unit;
   // set loadavg to 1.0
   info.loads[0] = 65536;
   info.loads[1] = 65536;
@@ -3072,7 +3171,7 @@ bool timer_gettimeSystemCall::handleDetPre(
     struct itimerspec is;
     is.it_interval.tv_sec = is.it_interval.tv_nsec = 0;
     is.it_value.tv_sec = is.it_value.tv_nsec = 0;
-    t.writeToTracee(traceePtr<struct itimerspec>(isp), is, s.traceePid);
+    writeTraceeItimerspec(t, (uint64_t)isp, is, s.traceePid);
   }
 
   // Set invalid arguments so kernel doesn't overwrite our special struct
@@ -3200,8 +3299,7 @@ bool timerfd_settimeSystemCall::handleDetPre(
     globalState& gs, state& s, ptracer& t, scheduler& sched) {
   int fd = t.arg1();
   struct itimerspec* spec = (itimerspec*)s.mmapMemory.getAddr().ptr;
-  auto value = t.readFromTracee(
-      traceePtr<struct itimerspec>((struct itimerspec*)t.arg3()), s.traceePid);
+  auto value = readTraceeItimerspec(t, t.arg3(), s.traceePid);
   (*s.timerfds)[fd] = value;
   struct itimerspec timer = {
       {0, 0},
@@ -3216,7 +3314,7 @@ bool timerfd_settimeSystemCall::handleDetPre(
     timer.it_value.tv_nsec = 0;
   }
 
-  t.writeToTracee(traceePtr<itimerspec>(spec), timer, s.traceePid);
+  writeTraceeItimerspec(t, (uint64_t)spec, timer, s.traceePid);
   s.originalArg3 = t.arg3();
   t.writeArg3((unsigned long)spec);
 
@@ -3234,9 +3332,7 @@ void timerfd_settimeSystemCall::handleDetPost(
   if (retval == 0 && t.arg4() != 0) {
     auto it = s.timerfds->find(fd);
     if (it != s.timerfds->end()) {
-      t.writeToTracee(
-          traceePtr<struct itimerspec>((struct itimerspec*)t.arg4()),
-          it->second, s.traceePid);
+      writeTraceeItimerspec(t, t.arg4(), it->second, s.traceePid);
     }
   }
 }
@@ -3261,7 +3357,7 @@ void timerfd_gettimeSystemCall::handleDetPost(
         timer.it_value.tv_sec = 0;
         timer.it_value.tv_nsec = 1;
       }
-      t.writeToTracee(rptr, timer, s.traceePid);
+      writeTraceeItimerspec(t, (uint64_t)rptr.ptr, timer, s.traceePid);
     }
   }
 }
@@ -3336,6 +3432,15 @@ void unameSystemCall::handleDetPost(
     strncpy(myUts.version, DETTRACE_UTS_VERSION, MEMBER_LENGTH);
 #if defined(__aarch64__)
     strncpy(myUts.machine, "aarch64", MEMBER_LENGTH);
+#elif defined(__arm__) && __ARM_ARCH >= 7
+    // What a 32-bit kernel reports, not the "armv8l" an arm64 kernel
+    // shows its 32-bit processes; the same on every host.
+    strncpy(myUts.machine, "armv7l", MEMBER_LENGTH);
+#elif defined(__arm__)
+    strncpy(myUts.machine, "armv6l", MEMBER_LENGTH);
+#elif defined(__i386__)
+    // What every i586 build sees (the linux32 personality on any x86).
+    strncpy(myUts.machine, "i686", MEMBER_LENGTH);
 #elif defined(__powerpc64__)
     strncpy(myUts.machine, "ppc64le", MEMBER_LENGTH);
 #elif defined(__s390x__)
@@ -3466,9 +3571,9 @@ bool utimensatSystemCall::handleDetPre(
     if (gs.log.getDebugLevel() > 0) {
       // log tracee-specified struct timespec for validation
       struct timespec times[2];
-      readVmTraceeRaw(
-          traceePtr<struct timespec>((struct timespec*)origTimespec), times,
-          sizeof(times), s.traceePid);
+      times[0] = readTraceeTimespec(t, (uint64_t)origTimespec, s.traceePid);
+      times[1] = readTraceeTimespec(
+          t, (uint64_t)origTimespec + traceeTimespecSize(t), s.traceePid);
       gs.log.writeToLog(
           Importance::info,
           "atime.tv_sec:%lu atime.tv_nsec:%ld mtime.tv_sec:%lu "
@@ -3490,10 +3595,10 @@ bool utimensatSystemCall::handleDetPre(
   const auto clockTime = logical_clock::to_timespec(gs.epoch);
 
   // Write our struct to the tracee's memory.
-  t.writeToTracee(
-      traceePtr<struct timespec>(&(ourTimespec[0])), clockTime, s.traceePid);
-  t.writeToTracee(
-      traceePtr<struct timespec>(&(ourTimespec[1])), clockTime, s.traceePid);
+  writeTraceeTimespec(t, (uint64_t)ourTimespec, clockTime, s.traceePid);
+  writeTraceeTimespec(
+      t, (uint64_t)ourTimespec + traceeTimespecSize(t), clockTime,
+      s.traceePid);
 
   // Point system call to new address.
   t.writeArg3((uint64_t)ourTimespec);

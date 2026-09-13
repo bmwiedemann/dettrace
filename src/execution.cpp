@@ -22,7 +22,7 @@ void deleteMultimapEntry(
     unordered_multimap<pid_t, pid_t>& mymap, pid_t key, pid_t value);
 pid_t eraseChildEntry(multimap<pid_t, pid_t>& map, pid_t process);
 bool kernelCheck(int a, int b, int c);
-#if defined(__x86_64__)
+#if defined(__x86_64__) || defined(__i386__)
 void trapCPUID(globalState& gs, state& s, ptracer& t);
 #endif
 
@@ -743,7 +743,7 @@ void execution::disableVdso(pid_t pid) {
       // works on whole words, so merge the last one with what is there.
       const size_t wordSize = sizeof(long);
       VERIFY(sym.code_size <= alignUp(sym.size, wordSize));
-      const unsigned long poison = vdsoPoison;
+      const unsigned long poison = sym.poison;
       for (unsigned long off = 0; off < sym.size; off += wordSize) {
         unsigned char bytes[wordSize];
         long word = ptracer::doPtrace(
@@ -767,12 +767,12 @@ void execution::disableVdso(pid_t pid) {
     auto oldRegs = regs;
 
     REG_SYSNUM(regs) = SYS_mprotect;
-#if defined(__x86_64__)
-    regs.rax = SYS_mprotect;
+#if defined(__x86_64__) || defined(__i386__)
+    REG_RETVAL(regs) = SYS_mprotect;
 #endif
     /* The pc was restored to the start of the injected stub by
        traceePreinitMmap; step it to the syscall instruction. */
-    REG_IP(regs) += stubSyscallOff;
+    REG_IP(regs) += syscallStubFor(regs).syscallOff;
     REG_ARG1(regs) = vvarMap.procMapBase;
     REG_ARG2(regs) = vvarMap.procMapSize;
     REG_ARG3(regs) = PROT_NONE;
@@ -787,7 +787,7 @@ void execution::disableVdso(pid_t pid) {
     VERIFY(waitpid(pid, &status, 0) == pid);
     VERIFY(WIFSTOPPED(status) && WSTOPSIG(status) == SIGTRAP);
     ptracer::readRegisters(pid, regs);
-    if (regsReturnValue(regs) < 0) {
+    if (syscallFailed(regsReturnValue(regs))) {
       string err = "unable to inject mprotect, error: \n";
       runtimeError(err + strerror((int)-regsReturnValue(regs)));
     }
@@ -802,15 +802,22 @@ static unsigned long traceePreinitMmap(pid_t pid, ptracer& t) {
   ptracer::readRegisters(pid, regs);
   auto oldRegs = regs;
 
+#if defined(__i386__) || defined(__arm__)
+  /* The 32-bit tables only have (i386: only usefully have) mmap2, whose
+     offset is in pages; ours is 0 anyway. */
+  REG_SYSNUM(regs) = SYS_mmap2;
+#else
   REG_SYSNUM(regs) = SYS_mmap;
-#if defined(__x86_64__)
-  regs.rax = SYS_mmap;
 #endif
+#if defined(__x86_64__) || defined(__i386__)
+  REG_RETVAL(regs) = REG_SYSNUM(regs);
+#endif
+  const SyscallStub& stub = syscallStubFor(regs);
   /* Move the pc from where the first breakpoint trap left it to the
      syscall instruction of the injected stub (a no-op where the
      breakpoint already advances the pc onto the syscall, e.g. x86 and
      s390). */
-  REG_IP(regs) += stubSyscallOff - stubFirstTrapOff;
+  REG_IP(regs) += stub.syscallOff - stub.firstTrapOff;
 #if defined(__s390x__)
   /* s390's mmap syscall is the old single-argument form taking a
      pointer to { addr, len, prot, flags, fd, offset }. There is no
@@ -846,14 +853,14 @@ static unsigned long traceePreinitMmap(pid_t pid, ptracer& t) {
   VERIFY(waitpid(pid, &status, 0) == pid);
   VERIFY(WIFSTOPPED(status) && WSTOPSIG(status) == SIGTRAP);
   ptracer::readRegisters(pid, regs);
-  if (regsReturnValue(regs) < 0) {
+  if (syscallFailed(regsReturnValue(regs))) {
     string err = "unable to inject syscall page, error: \n";
     runtimeError(err + strerror((int)-regsReturnValue(regs)));
   }
   ret = regsReturnValue(regs);
   /* Rewind from behind the stub back to its start, where the original
      instruction will be restored. */
-  REG_IP(oldRegs) = REG_IP(regs) - stubEndOff;
+  REG_IP(oldRegs) = REG_IP(regs) - stub.endOff;
   memcpy(&regs, &oldRegs, sizeof(regs));
   ptracer::writeRegisters(pid, regs);
 
@@ -865,21 +872,27 @@ void execution::handleExecEvent(pid_t pid) {
 
   ptracer::readRegisters(pid, regs);
   auto rip = REG_IP(regs);
+#if defined(__arm__)
+  /* An arm64 kernel leaves bit 0 of a Thumb entry point set in the
+     compat pc (a 32-bit kernel clears it); the mode is in the cpsr. */
+  rip &= ~1UL;
+#endif
   errno = 0;
 
   /* Overwrite the instructions at the entry point with the
      breakpoint; syscall; breakpoint stub, preserving the bytes of the
      partially overwritten trailing word. */
-  const size_t stubWords =
-      (sizeof(syscallStub) + sizeof(long) - 1) / sizeof(long);
-  long saved_insns[stubWords];
+  const SyscallStub& stub = syscallStubFor(regs);
+  const size_t stubWords = (stub.size + sizeof(long) - 1) / sizeof(long);
+  long saved_insns[maxSyscallStubWords] = {0};
   unsigned char patched[sizeof(saved_insns)];
+  VERIFY(stubWords <= maxSyscallStubWords);
   for (size_t i = 0; i < stubWords; i++) {
     saved_insns[i] = tracer.doPtrace(
         PTRACE_PEEKTEXT, pid, (void*)(rip + i * sizeof(long)), 0);
   }
-  memcpy(patched, saved_insns, sizeof(patched));
-  memcpy(patched, syscallStub, sizeof(syscallStub));
+  memcpy(patched, saved_insns, stubWords * sizeof(long));
+  memcpy(patched, stub.code, stub.size);
   for (size_t i = 0; i < stubWords; i++) {
     long word;
     memcpy(&word, &patched[i * sizeof(long)], sizeof(word));
@@ -945,7 +958,7 @@ bool execution::handleSeccomp(const pid_t traceesPid) {
   // they survive scheduler switches to other tracees.
   tracer.captureSyscallArgs();
 
-#if defined(__x86_64__)
+#if defined(__x86_64__) || defined(__i386__)
   if (myGlobalState.allow_trapCPUID) {
     if (!states.at(traceesPid).CPUIDTrapSet && !myGlobalState.kernelPre4_12 &&
         NULL == getenv("DETTRACE_NO_CPUID_INTERCEPTION")) {
@@ -1013,7 +1026,7 @@ static const struct CPUIDRegs extended_cpuids[] =
 
 // =======================================================================================
 void execution::handleSignal(int sigNum, const pid_t traceesPid) {
-#if defined(__x86_64__)
+#if defined(__x86_64__) || defined(__i386__)
   // rdtsc, rdtscp and cpuid raise SIGSEGV because we trap them, emulate
   // them with deterministic values. Other architectures have no
   // equivalent user space instructions to determinize.
@@ -1065,8 +1078,8 @@ void execution::handleSignal(int sigNum, const pid_t traceesPid) {
           "== %p\n";
       auto coloredMsg = log.makeTextColored(Color::blue, msg);
       log.writeToLog(
-          Importance::inter, coloredMsg, traceesPid, regs.rip, regs.rax,
-          regs.rcx);
+          Importance::inter, coloredMsg, traceesPid, REG_IP(regs),
+          REG_AX(regs), REG_CX(regs));
 
       // step over cpuid insn
       tracer.writeIp((uint64_t)tracer.getRip().ptr + 2);
@@ -1083,9 +1096,9 @@ void execution::handleSignal(int sigNum, const pid_t traceesPid) {
           0x80000000ul + sizeof(extended_cpuids) / sizeof(extended_cpuids[0]);
       VERIFY(nleafs_ext == 1 + extended_cpuids[0].eax);
 
-      switch (regs.rax) {
+      switch ((unsigned long)REG_AX(regs)) {
       case 0x0 ... nleafs: {
-        long leaf = regs.rax;
+        long leaf = REG_AX(regs);
         const struct CPUIDRegs& cpuid = cpuids[leaf];
         tracer.writeRax(cpuid.eax);
         tracer.writeRbx(cpuid.ebx);
@@ -1093,7 +1106,7 @@ void execution::handleSignal(int sigNum, const pid_t traceesPid) {
         tracer.writeRdx(cpuid.edx);
       } break;
       case 0x80000000ul ... nleafs_ext: {
-        long leaf = regs.rax - 0x80000000ul;
+        long leaf = REG_AX(regs) - 0x80000000ul;
         const struct CPUIDRegs& cpuid_ext = extended_cpuids[leaf];
         tracer.writeRax(cpuid_ext.eax);
         tracer.writeRbx(cpuid_ext.ebx);
@@ -1101,7 +1114,8 @@ void execution::handleSignal(int sigNum, const pid_t traceesPid) {
         tracer.writeRdx(cpuid_ext.edx);
       } break;
       default:
-        runtimeError("CPUID unsupported %eax = " + to_string(regs.rax));
+        runtimeError(
+            "CPUID unsupported %eax = " + to_string(REG_AX(regs)));
       }
 
       return;
@@ -1193,6 +1207,9 @@ bool execution::callPreHook(
   case SYS_chmod:
     return chmodSystemCall::handleDetPre(gs, s, t, sched);
 
+#ifdef SYS_clock_gettime64
+  case SYS_clock_gettime64:
+#endif
   case SYS_clock_gettime:
     return clock_gettimeSystemCall::handleDetPre(gs, s, t, sched);
 
@@ -1239,15 +1256,27 @@ bool execution::callPreHook(
   case SYS_fchownat:
     return fchownatSystemCall::handleDetPre(gs, s, t, sched);
 
+#ifdef SYS_fchown32
+  case SYS_fchown32:
+#endif
   case SYS_fchown:
     return fchownSystemCall::handleDetPre(gs, s, t, sched);
 
+#ifdef SYS_chown32
+  case SYS_chown32:
+#endif
   case SYS_chown:
     return chownSystemCall::handleDetPre(gs, s, t, sched);
 
+#ifdef SYS_lchown32
+  case SYS_lchown32:
+#endif
   case SYS_lchown:
     return lchownSystemCall::handleDetPre(gs, s, t, sched);
 
+#ifdef SYS_fcntl64
+  case SYS_fcntl64:
+#endif
   case SYS_fcntl:
     return fcntlSystemCall::handleDetPre(gs, s, t, sched);
 
@@ -1260,6 +1289,9 @@ bool execution::callPreHook(
   case SYS_fstatfs:
     return fstatfsSystemCall::handleDetPre(gs, s, t, sched);
 
+#ifdef SYS_futex_time64
+  case SYS_futex_time64:
+#endif
   case SYS_futex:
     return futexSystemCall::handleDetPre(gs, s, t, sched);
 
@@ -1284,6 +1316,9 @@ bool execution::callPreHook(
     return getrandomSystemCall::handleDetPre(gs, s, t, sched);
 #endif
 
+#ifdef SYS_ugetrlimit
+  case SYS_ugetrlimit:
+#endif
   case SYS_getrlimit:
     return getrlimitSystemCall::handleDetPre(gs, s, t, sched);
 
@@ -1308,6 +1343,9 @@ bool execution::callPreHook(
   case SYS_nanosleep:
     return nanosleepSystemCall::handleDetPre(gs, s, t, sched);
 
+#ifdef SYS_clock_nanosleep_time64
+  case SYS_clock_nanosleep_time64:
+#endif
   case SYS_clock_nanosleep:
     return clock_nanosleepSystemCall::handleDetPre(gs, s, t, sched);
 
@@ -1347,12 +1385,18 @@ bool execution::callPreHook(
   case SYS_pipe2:
     return pipe2SystemCall::handleDetPre(gs, s, t, sched);
 
+#ifdef SYS_pselect6_time64
+  case SYS_pselect6_time64:
+#endif
   case SYS_pselect6:
     return pselect6SystemCall::handleDetPre(gs, s, t, sched);
 
   case SYS_poll:
     return pollSystemCall::handleDetPre(gs, s, t, sched);
 
+#ifdef SYS_ppoll_time64
+  case SYS_ppoll_time64:
+#endif
   case SYS_ppoll:
     return ppollSystemCall::handleDetPre(gs, s, t, sched);
 
@@ -1389,6 +1433,9 @@ bool execution::callPreHook(
   case SYS_rt_sigaction:
     return rt_sigactionSystemCall::handleDetPre(gs, s, t, sched);
 
+#ifdef SYS_rt_sigtimedwait_time64
+  case SYS_rt_sigtimedwait_time64:
+#endif
   case SYS_rt_sigtimedwait:
     return rt_sigtimedwaitSystemCall::handleDetPre(gs, s, t, sched);
 
@@ -1410,6 +1457,9 @@ bool execution::callPreHook(
   case SYS_recvfrom:
     return recvfromSystemCall::handleDetPre(gs, s, t, sched);
 
+#ifdef SYS__newselect
+  case SYS__newselect:
+#endif
   case SYS_select:
     return selectSystemCall::handleDetPre(gs, s, t, sched);
 
@@ -1463,18 +1513,30 @@ bool execution::callPreHook(
   case SYS_timer_getoverrun:
     return timer_getoverrunSystemCall::handleDetPre(gs, s, t, sched);
 
+#ifdef SYS_timer_gettime64
+  case SYS_timer_gettime64:
+#endif
   case SYS_timer_gettime:
     return timer_gettimeSystemCall::handleDetPre(gs, s, t, sched);
 
+#ifdef SYS_timer_settime64
+  case SYS_timer_settime64:
+#endif
   case SYS_timer_settime:
     return timer_settimeSystemCall::handleDetPre(gs, s, t, sched);
 
   case SYS_timerfd_create:
     return timerfd_createSystemCall::handleDetPre(gs, s, t, sched);
 
+#ifdef SYS_timerfd_settime64
+  case SYS_timerfd_settime64:
+#endif
   case SYS_timerfd_settime:
     return timerfd_settimeSystemCall::handleDetPre(gs, s, t, sched);
 
+#ifdef SYS_timerfd_gettime64
+  case SYS_timerfd_gettime64:
+#endif
   case SYS_timerfd_gettime:
     return timerfd_gettimeSystemCall::handleDetPre(gs, s, t, sched);
 
@@ -1496,6 +1558,9 @@ bool execution::callPreHook(
   case SYS_utimes:
     return utimesSystemCall::handleDetPre(gs, s, t, sched);
 
+#ifdef SYS_utimensat_time64
+  case SYS_utimensat_time64:
+#endif
   case SYS_utimensat:
     return utimensatSystemCall::handleDetPre(gs, s, t, sched);
 
@@ -1552,15 +1617,24 @@ void execution::callPostHook(
   case SYS_chdir:
     return chdirSystemCall::handleDetPost(gs, s, t, sched);
 
+#ifdef SYS_chown32
+  case SYS_chown32:
+#endif
   case SYS_chown:
     return chownSystemCall::handleDetPost(gs, s, t, sched);
 
+#ifdef SYS_lchown32
+  case SYS_lchown32:
+#endif
   case SYS_lchown:
     return lchownSystemCall::handleDetPost(gs, s, t, sched);
 
   case SYS_chmod:
     return chmodSystemCall::handleDetPost(gs, s, t, sched);
 
+#ifdef SYS_clock_gettime64
+  case SYS_clock_gettime64:
+#endif
   case SYS_clock_gettime:
     return clock_gettimeSystemCall::handleDetPost(gs, s, t, sched);
 
@@ -1601,9 +1675,15 @@ void execution::callPostHook(
   case SYS_fchownat:
     return fchownatSystemCall::handleDetPost(gs, s, t, sched);
 
+#ifdef SYS_fchown32
+  case SYS_fchown32:
+#endif
   case SYS_fchown:
     return fchownSystemCall::handleDetPost(gs, s, t, sched);
 
+#ifdef SYS_fcntl64
+  case SYS_fcntl64:
+#endif
   case SYS_fcntl:
     return fcntlSystemCall::handleDetPost(gs, s, t, sched);
 
@@ -1616,6 +1696,9 @@ void execution::callPostHook(
   case SYS_fstatfs:
     return fstatfsSystemCall::handleDetPost(gs, s, t, sched);
 
+#ifdef SYS_futex_time64
+  case SYS_futex_time64:
+#endif
   case SYS_futex:
     return futexSystemCall::handleDetPost(gs, s, t, sched);
 
@@ -1640,6 +1723,9 @@ void execution::callPostHook(
     return getrandomSystemCall::handleDetPost(gs, s, t, sched);
 #endif
 
+#ifdef SYS_ugetrlimit
+  case SYS_ugetrlimit:
+#endif
   case SYS_getrlimit:
     return getrlimitSystemCall::handleDetPost(gs, s, t, sched);
 
@@ -1700,12 +1786,18 @@ void execution::callPostHook(
   case SYS_pipe2:
     return pipe2SystemCall::handleDetPost(gs, s, t, sched);
 
+#ifdef SYS_pselect6_time64
+  case SYS_pselect6_time64:
+#endif
   case SYS_pselect6:
     return pselect6SystemCall::handleDetPost(gs, s, t, sched);
 
   case SYS_poll:
     return pollSystemCall::handleDetPost(gs, s, t, sched);
 
+#ifdef SYS_ppoll_time64
+  case SYS_ppoll_time64:
+#endif
   case SYS_ppoll:
     return ppollSystemCall::handleDetPost(gs, s, t, sched);
 
@@ -1742,6 +1834,9 @@ void execution::callPostHook(
   case SYS_rt_sigaction:
     return rt_sigactionSystemCall::handleDetPost(gs, s, t, sched);
 
+#ifdef SYS_rt_sigtimedwait_time64
+  case SYS_rt_sigtimedwait_time64:
+#endif
   case SYS_rt_sigtimedwait:
     return rt_sigtimedwaitSystemCall::handleDetPost(gs, s, t, sched);
 
@@ -1763,6 +1858,9 @@ void execution::callPostHook(
   case SYS_recvfrom:
     return recvfromSystemCall::handleDetPost(gs, s, t, sched);
 
+#ifdef SYS__newselect
+  case SYS__newselect:
+#endif
   case SYS_select:
     return selectSystemCall::handleDetPost(gs, s, t, sched);
 
@@ -1829,18 +1927,30 @@ void execution::callPostHook(
   case SYS_timer_getoverrun:
     return timer_getoverrunSystemCall::handleDetPost(gs, s, t, sched);
 
+#ifdef SYS_timer_gettime64
+  case SYS_timer_gettime64:
+#endif
   case SYS_timer_gettime:
     return timer_gettimeSystemCall::handleDetPost(gs, s, t, sched);
 
+#ifdef SYS_timer_settime64
+  case SYS_timer_settime64:
+#endif
   case SYS_timer_settime:
     return timer_settimeSystemCall::handleDetPost(gs, s, t, sched);
 
   case SYS_timerfd_create:
     return timerfd_createSystemCall::handleDetPost(gs, s, t, sched);
 
+#ifdef SYS_timerfd_settime64
+  case SYS_timerfd_settime64:
+#endif
   case SYS_timerfd_settime:
     return timerfd_settimeSystemCall::handleDetPost(gs, s, t, sched);
 
+#ifdef SYS_timerfd_gettime64
+  case SYS_timerfd_gettime64:
+#endif
   case SYS_timerfd_gettime:
     return timerfd_gettimeSystemCall::handleDetPost(gs, s, t, sched);
 
@@ -1862,6 +1972,9 @@ void execution::callPostHook(
   case SYS_utimes:
     return utimesSystemCall::handleDetPost(gs, s, t, sched);
 
+#ifdef SYS_utimensat_time64
+  case SYS_utimensat_time64:
+#endif
   case SYS_utimensat:
     return utimensatSystemCall::handleDetPost(gs, s, t, sched);
 
@@ -2097,7 +2210,7 @@ pid_t eraseChildEntry(multimap<pid_t, pid_t>& map, pid_t process) {
 }
 // =======================================================================================
 
-#if defined(__x86_64__)
+#if defined(__x86_64__) || defined(__i386__)
 void trapCPUID(globalState& gs, state& s, ptracer& t) {
   gs.log.writeToLog(
       Importance::info,

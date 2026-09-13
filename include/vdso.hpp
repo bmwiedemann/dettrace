@@ -30,6 +30,8 @@ enum VDSOFunc {
   VDSO_getrandom,
   VDSO_riscv_hwprobe,
   VDSO_clock_getres,
+  VDSO_clock_gettime64, /* 32-bit architectures' 64-bit time_t entries */
+  VDSO_clock_getres_time64,
 };
 
 /**
@@ -51,6 +53,11 @@ struct VDSOSymbol {
   const unsigned char* code;
   enum VDSOFunc func;
   unsigned int code_size;
+  /// Word written over the rest of the symbol so that a call into the
+  /// original code traps: the architecture's breakpoint instruction,
+  /// repeated to fill the word (arm: of the instruction set the vDSO is
+  /// in, see the Thumb bit handling in proc_get_vdso_symbols).
+  unsigned long poison;
 };
 
 /// parse /proc/<pid>/maps

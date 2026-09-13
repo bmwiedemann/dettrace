@@ -12,7 +12,11 @@ CXX := clang++
 CC := clang
 CLANG_TIDY ?= clang-tidy
 
-DEFINES := -D_GNU_SOURCE=1 -D_POSIX_C_SOURCE=20181101 -D__USE_XOPEN=1 -DAPP_VERSION=\"$(DTVERSION)\" -DAPP_BUILDID=\"$(BUILDID)\"
+# _FILE_OFFSET_BITS=64: on i386 and arm this gives dettrace's own stat(),
+# inodes and offsets 64 bits, and makes struct stat the kernel's struct
+# stat64 that tracees use there (see include/syscallCompat.hpp); a no-op on
+# the 64-bit architectures.
+DEFINES := -D_GNU_SOURCE=1 -D_POSIX_C_SOURCE=20181101 -D__USE_XOPEN=1 -D_FILE_OFFSET_BITS=64 -DAPP_VERSION=\"$(DTVERSION)\" -DAPP_BUILDID=\"$(BUILDID)\"
 INCLUDE := -I include -I cxxopts/include $(shell pkg-config --cflags libseccomp)
 CXXFLAGS += -g -O3 -std=c++14 -Wall $(INCLUDE) $(DEFINES) $(EXTRA_CXXFLAGS)
 CFLAGS += -g -O3 -Wall -Wshadow $(INCLUDE) $(DEFINES) $(EXTRA_CFLAGS)

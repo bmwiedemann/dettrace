@@ -50,7 +50,7 @@ bool replaySyscallIfBlocked(
 // =======================================================================================
 void replaySystemCall(globalState& gs, ptracer& t, uint64_t systemCall) {
 #ifdef EXTRANEOUS_TRACEE_READS
-#if defined(__x86_64__)
+#if defined(__x86_64__) || defined(__i386__)
   uint16_t minus2 = t.readFromTracee(
       traceePtr<uint16_t>((uint16_t*)((uint64_t)t.getRip().ptr - 2)),
       t.getPid());
@@ -82,10 +82,11 @@ void replaySystemCall(globalState& gs, ptracer& t, uint64_t systemCall) {
   // argument register, and the retry logic may also have adjusted
   // others; writeArgN keeps the cache authoritative.
   t.writeSyscallArgsToRegs();
-  t.writeIp((uint64_t)t.getRip().ptr - syscallInsnSize);
+  t.writeIp((uint64_t)t.getRip().ptr - t.syscallInsnLength());
 }
 // =======================================================================================
-void zeroOutStatfs(struct statfs& stats) {
+template <typename StatfsT>
+void zeroOutStatfs(StatfsT& stats) {
   // Type of filesystem
   stats.f_type = 0xEF53; // EXT4_SUPER_MAGIC
   stats.f_bsize = 100; /* Optimal transfer block size */
@@ -101,15 +102,20 @@ void zeroOutStatfs(struct statfs& stats) {
   stats.f_frsize = 20; /* Fragment size (since Linux 2.6) */
   stats.f_flags = 1; /* Mount flags of filesystem */
 }
+template void zeroOutStatfs(struct statfs& stats);
+template void zeroOutStatfs(struct statfs64& stats);
 // =======================================================================================
 void handleStatFamily(
     globalState& gs, state& s, ptracer& t, string syscallName) {
-  struct stat* statPtr;
+  // The tracee's buffer is the kernel's stat structure: struct stat on
+  // the 64-bit architectures, struct stat64 on i386 and arm (see
+  // syscallCompat.hpp), which is struct stat64 on all of them.
+  struct stat64* statPtr;
 
   if (syscallName == "newfstatat") {
-    statPtr = (struct stat*)t.arg3();
+    statPtr = (struct stat64*)t.arg3();
   } else {
-    statPtr = (struct stat*)t.arg2();
+    statPtr = (struct stat64*)t.arg2();
   }
 
   if (statPtr == nullptr) {
@@ -119,9 +125,9 @@ void handleStatFamily(
 
   int retVal = t.getReturnValue();
   if (retVal == 0) {
-    struct stat theirStat =
-        t.readFromTracee(traceePtr<struct stat>(statPtr), s.traceePid);
-    struct stat myStat; // Start clean.
+    struct stat64 theirStat =
+        t.readFromTracee(traceePtr<struct stat64>(statPtr), s.traceePid);
+    struct stat64 myStat; // Start clean.
     memset(&myStat, 0, sizeof(myStat));
     // Ignored/overwritten: st_dev, st_ino, st_nlink, st_blksize, st_blocks
     myStat.st_mode = theirStat.st_mode;
@@ -191,7 +197,7 @@ void handleStatFamily(
     gs.log.writeToLog(Importance::info, "st_size:%u\n", myStat.st_size);
     gs.log.writeToLog(
         Importance::info, "overwriting tracee stat struct, copying %u bytes\n",
-        sizeof(struct stat));
+        sizeof(struct stat64));
 
     myStat.st_blksize = 512; /* Block size for filesystem I/O */
 
@@ -199,7 +205,7 @@ void handleStatFamily(
     myStat.st_blocks = 1; /* Number of 512B blocks allocated */
 
     // Write back result for child.
-    t.writeToTracee(traceePtr<struct stat>(statPtr), myStat, s.traceePid);
+    t.writeToTracee(traceePtr<struct stat64>(statPtr), myStat, s.traceePid);
   }
   return;
 }
@@ -258,10 +264,14 @@ void cancelSystemCall(globalState& gs, state& s, ptracer& t) {
   if (WIFSTOPPED(status)) {
     int sig = WSTOPSIG(status);
     if (sig == SIGTRAP || sig == (SIGTRAP | 0x80) || sig == SIGCHLD) {
-      // restore regs
+      // restore regs, and the tracer's cached copy with them: it still
+      // holds the -1 from changeSystemCall, which the caller's
+      // setReturnRegister would otherwise write back into the tracee's
+      // syscall-number register (r7 on arm is a plain GPR to user code).
       REG_SYSNUM(regs) = cancelled;
       REG_RETVAL(regs) = retval;
       ptracer::writeRegisters(pid, regs);
+      t.refreshRegisters();
       return;
     }
   }

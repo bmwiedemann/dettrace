@@ -1,5 +1,5 @@
 /// NB: This file is written in pure C to avoid heap allocations.
-/// Supports Linux/x86-64 only.
+/// The stubs below cover every architecture dettrace runs on.
 
 /// parsing vDSO symbols based on vDSO entry found from /proc/<pid>/maps
 /// Note vDSO can be disabled by passing `vdso=0` kernel command line.
@@ -28,12 +28,41 @@
 
 #include <elf.h>
 #include <errno.h>
+#include <link.h> /* ElfW */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
+#include "ptracer.hpp" /* BREAK_INSN */
 #include "util.hpp"
 #include "vdso.hpp"
+
+/* link.h only has ElfW for types; the same for the ELF64_/ELF32_ macros. */
+#define ELFW(type) _ElfW(ELF, __ELF_NATIVE_CLASS, type)
+
+/* A system call number as the little-endian immediate of an instruction
+   or a literal word. */
+#define SYSNUM_LE32(n)                                                     \
+  (unsigned char)((n)&0xff), (unsigned char)(((n) >> 8) & 0xff),           \
+      (unsigned char)(((n) >> 16) & 0xff), (unsigned char)(((n) >> 24) & 0xff)
+
+/*
+ * Word written over the rest of a replaced vDSO function so that a call
+ * into the original code traps, see execution::disableVdso: whole-word
+ * fill of the architecture's breakpoint instruction.
+ */
+#if defined(__x86_64__) || defined(__i386__)
+static const unsigned long vdsoPoison = (unsigned long)0xccccccccccccccccULL; /* int3 */
+#elif defined(__s390x__)
+static const unsigned long vdsoPoison = 0x0001000100010001UL; /* breakpoint */
+#elif defined(__arm__)
+/* The vDSO is either all ARM or all Thumb code, decided per symbol. */
+static const unsigned long vdsoPoison = BREAK_INSN;
+static const unsigned long vdsoPoisonThumb =
+    THUMB_BREAK_INSN | (THUMB_BREAK_INSN << 16);
+#else
+static const unsigned long vdsoPoison = BREAK_INSN | (BREAK_INSN << 32);
+#endif
 
 /*
  * byte code for the new psudo vdso functions which do the actual syscalls.
@@ -92,6 +121,93 @@ static const unsigned char __vdso_getrandom[] = {
     0xb8, 0xda, 0xff, 0xff, 0xff                 // mov $-ENOSYS, %eax
   , 0xc3                                         // retq
   , 0x66, 0x90 };                                // nop
+#elif defined(__i386__)
+// cdecl: the arguments are on the stack, int $0x80 takes them in ebx and
+// ecx (ebx is callee-saved). The 32-bit vDSO has both the 32-bit time_t
+// entries and the *64 ones glibc uses since 2.34.
+#define I386_SYSCALL_STUB_2ARGS(nr)                                        \
+  {                                                                        \
+    0x53,                        /* push %ebx */                           \
+    0x8b, 0x5c, 0x24, 0x08,      /* mov 8(%esp), %ebx */                   \
+    0x8b, 0x4c, 0x24, 0x0c,      /* mov 12(%esp), %ecx */                  \
+    0xb8, SYSNUM_LE32(nr),       /* mov $nr, %eax */                       \
+    0xcd, 0x80,                  /* int $0x80 */                           \
+    0x5b,                        /* pop %ebx */                            \
+    0xc3                         /* ret */                                 \
+  }
+static const unsigned char __vdso_clock_gettime[] =
+    I386_SYSCALL_STUB_2ARGS(SYS_clock_gettime);
+static const unsigned char __vdso_clock_gettime64[] =
+    I386_SYSCALL_STUB_2ARGS(SYS_clock_gettime64);
+static const unsigned char __vdso_gettimeofday[] =
+    I386_SYSCALL_STUB_2ARGS(SYS_gettimeofday);
+// See the x86_64 __vdso_clock_getres above.
+static const unsigned char __vdso_clock_getres[] =
+    I386_SYSCALL_STUB_2ARGS(SYS_clock_getres);
+static const unsigned char __vdso_clock_getres_time64[] =
+    I386_SYSCALL_STUB_2ARGS(SYS_clock_getres_time64);
+static const unsigned char __vdso_time[] = {
+    0x53                                         // push %ebx
+  , 0x8b, 0x5c, 0x24, 0x08                       // mov 8(%esp), %ebx
+  , 0xb8, SYSNUM_LE32(SYS_time)                  // mov $SYS_time, %eax
+  , 0xcd, 0x80                                   // int $0x80
+  , 0x5b                                         // pop %ebx
+  , 0xc3 };                                      // ret
+// returns cpu 0, node 0, like the x86_64 __vdso_getcpu
+static const unsigned char __vdso_getcpu[] = {
+    0x8b, 0x44, 0x24, 0x04                       // mov 4(%esp), %eax
+  , 0x85, 0xc0                                   // test %eax, %eax
+  , 0x74, 0x06                                   // je ..
+  , 0xc7, 0x00, 0x00, 0x00, 0x00, 0x00           // movl $0, (%eax)
+  , 0x8b, 0x44, 0x24, 0x08                       // mov 8(%esp), %eax
+  , 0x85, 0xc0                                   // test %eax, %eax
+  , 0x74, 0x06                                   // je ..
+  , 0xc7, 0x00, 0x00, 0x00, 0x00, 0x00           // movl $0, (%eax)
+  , 0x31, 0xc0                                   // xor %eax, %eax
+  , 0xc3 };                                      // ret
+#elif defined(__arm__)
+// r0 and r1 already hold the arguments, the number goes into r7. One
+// encoding per instruction set: the kernel builds its vDSO as either ARM
+// or Thumb code, the symbol's bit 0 tells which. ARM code loads r7 from
+// a literal (movw needs ARMv6T2, and armv6 kernels are ARM code); Thumb
+// vDSOs only exist on Thumb-2 kernels, so there a movw avoids depending
+// on the 4-byte alignment a pc-relative literal load would need.
+#define ARM_SYSCALL_STUB(nr)                                               \
+  {                                                                        \
+    0x04, 0x70, 0x9f, 0xe5,      /* ldr r7, [pc, #4] */                    \
+    0x00, 0x00, 0x00, 0xef,      /* svc 0 */                               \
+    0x1e, 0xff, 0x2f, 0xe1,      /* bx lr */                               \
+    SYSNUM_LE32(nr)              /* .word nr */                            \
+  }
+/* Thumb-2 "movw r7, #nr" (encoding T3, imm16 = imm4:i:imm3:imm8). */
+#define THUMB_MOVW_R7(nr)                                                  \
+  (unsigned char)(0x40 | (((nr) >> 12) & 0xf)),                            \
+      (unsigned char)(0xf2 | ((((nr) >> 11) & 1) << 2)),                   \
+      (unsigned char)((nr)&0xff),                                          \
+      (unsigned char)(0x07 | ((((nr) >> 8) & 7) << 4))
+#define THUMB_SYSCALL_STUB(nr)                                             \
+  {                                                                        \
+    THUMB_MOVW_R7(nr),           /* movw r7, #nr */                        \
+    0x00, 0xdf,                  /* svc 0 */                               \
+    0x70, 0x47                   /* bx lr */                               \
+  }
+static const unsigned char __vdso_clock_gettime[] =
+    ARM_SYSCALL_STUB(SYS_clock_gettime);
+static const unsigned char __vdso_clock_gettime64[] =
+    ARM_SYSCALL_STUB(SYS_clock_gettime64);
+static const unsigned char __vdso_gettimeofday[] =
+    ARM_SYSCALL_STUB(SYS_gettimeofday);
+// See the x86_64 __vdso_clock_getres above.
+static const unsigned char __vdso_clock_getres[] =
+    ARM_SYSCALL_STUB(SYS_clock_getres);
+static const unsigned char __vdso_clock_gettime_thumb[] =
+    THUMB_SYSCALL_STUB(SYS_clock_gettime);
+static const unsigned char __vdso_clock_gettime64_thumb[] =
+    THUMB_SYSCALL_STUB(SYS_clock_gettime64);
+static const unsigned char __vdso_gettimeofday_thumb[] =
+    THUMB_SYSCALL_STUB(SYS_gettimeofday);
+static const unsigned char __vdso_clock_getres_thumb[] =
+    THUMB_SYSCALL_STUB(SYS_clock_getres);
 #elif defined(__aarch64__)
 static const unsigned char __kernel_clock_gettime[] = {
     0x28, 0x0e, 0x80, 0xd2                       // mov x8, #113 (SYS_clock_gettime)
@@ -355,6 +471,10 @@ static const char* vdsoGetFuncNames(enum VDSOFunc func) {
     return "__vdso_riscv_hwprobe";
   case VDSO_clock_getres:
     return "__vdso_clock_getres";
+  case VDSO_clock_gettime64:
+    return "__vdso_clock_gettime64";
+  case VDSO_clock_getres_time64:
+    return "__vdso_clock_getres_time64";
     // no default let the compiler do exhaustive check
   }
 }
@@ -438,12 +558,12 @@ int proc_get_vdso_symbols(
   int res = 0;
 
   unsigned long base = vdso_entry->procMapBase;
-  Elf64_Ehdr* ehdr = (Elf64_Ehdr*)base;
-  Elf64_Shdr *shbase = (Elf64_Shdr*)(base + ehdr->e_shoff), *dynsym = NULL;
+  ElfW(Ehdr)* ehdr = (ElfW(Ehdr)*)base;
+  ElfW(Shdr) * shbase = (ElfW(Shdr)*)(base + ehdr->e_shoff), *dynsym = NULL;
   const char* strtab = NULL;
 
   for (int i = 0; i < ehdr->e_shnum; i++) {
-    Elf64_Shdr* sh = &shbase[i];
+    ElfW(Shdr)* sh = &shbase[i];
     if (sh->sh_type == SHT_DYNSYM) {
       dynsym = sh;
     } else if (sh->sh_type == SHT_STRTAB && (sh->sh_flags & SHF_ALLOC)) {
@@ -454,11 +574,11 @@ int proc_get_vdso_symbols(
   if (!dynsym || !strtab) return res;
 
   for (int i = 0; i < dynsym->sh_size / dynsym->sh_entsize && res < size; i++) {
-    Elf64_Sym* sym =
-        (Elf64_Sym*)(base + dynsym->sh_offset + i * dynsym->sh_entsize);
+    ElfW(Sym)* sym =
+        (ElfW(Sym)*)(base + dynsym->sh_offset + i * dynsym->sh_entsize);
     const char* name = (const char*)((unsigned long)strtab + sym->st_name);
-    if (ELF64_ST_BIND(sym->st_info) == STB_GLOBAL &&
-        ELF64_ST_TYPE(sym->st_info) == STT_FUNC) {
+    if (ELFW(ST_BIND)(sym->st_info) == STB_GLOBAL &&
+        ELFW(ST_TYPE)(sym->st_info) == STT_FUNC) {
       VERIFY(sym->st_shndx < ehdr->e_shnum);
       unsigned long alignment = sym->st_shndx < ehdr->e_shnum
                                     ? shbase[sym->st_shndx].sh_addralign
@@ -491,6 +611,69 @@ int proc_get_vdso_symbols(
       } else {
         continue;
       }
+#elif defined(__i386__)
+      if (strcmp("__vdso_clock_gettime", name) == 0) {
+        vdso[res].func = VDSO_clock_gettime;
+        vdso[res].code_size = sizeof(__vdso_clock_gettime);
+        vdso[res].code = (const unsigned char*)__vdso_clock_gettime;
+      } else if (strcmp("__vdso_clock_gettime64", name) == 0) {
+        vdso[res].func = VDSO_clock_gettime64;
+        vdso[res].code_size = sizeof(__vdso_clock_gettime64);
+        vdso[res].code = (const unsigned char*)__vdso_clock_gettime64;
+      } else if (strcmp("__vdso_getcpu", name) == 0) {
+        vdso[res].func = VDSO_getcpu;
+        vdso[res].code_size = sizeof(__vdso_getcpu);
+        vdso[res].code = (const unsigned char*)__vdso_getcpu;
+      } else if (strcmp("__vdso_gettimeofday", name) == 0) {
+        vdso[res].func = VDSO_gettimeofday;
+        vdso[res].code_size = sizeof(__vdso_gettimeofday);
+        vdso[res].code = (const unsigned char*)__vdso_gettimeofday;
+      } else if (strcmp("__vdso_time", name) == 0) {
+        vdso[res].func = VDSO_time;
+        vdso[res].code_size = sizeof(__vdso_time);
+        vdso[res].code = (const unsigned char*)__vdso_time;
+      } else if (strcmp("__vdso_clock_getres", name) == 0) {
+        vdso[res].func = VDSO_clock_getres;
+        vdso[res].code_size = sizeof(__vdso_clock_getres);
+        vdso[res].code = (const unsigned char*)__vdso_clock_getres;
+      } else if (strcmp("__vdso_clock_getres_time64", name) == 0) {
+        vdso[res].func = VDSO_clock_getres_time64;
+        vdso[res].code_size = sizeof(__vdso_clock_getres_time64);
+        vdso[res].code = (const unsigned char*)__vdso_clock_getres_time64;
+      } else {
+        continue;
+      }
+#elif defined(__arm__)
+      /* Bit 0 of a function symbol's value marks Thumb code. */
+      const int thumb = sym->st_value & 1;
+      if (strcmp("__vdso_clock_gettime", name) == 0) {
+        vdso[res].func = VDSO_clock_gettime;
+        vdso[res].code_size = thumb ? sizeof(__vdso_clock_gettime_thumb)
+                                    : sizeof(__vdso_clock_gettime);
+        vdso[res].code = thumb ? __vdso_clock_gettime_thumb
+                               : __vdso_clock_gettime;
+      } else if (strcmp("__vdso_clock_gettime64", name) == 0) {
+        vdso[res].func = VDSO_clock_gettime64;
+        vdso[res].code_size = thumb ? sizeof(__vdso_clock_gettime64_thumb)
+                                    : sizeof(__vdso_clock_gettime64);
+        vdso[res].code = thumb ? __vdso_clock_gettime64_thumb
+                               : __vdso_clock_gettime64;
+      } else if (strcmp("__vdso_gettimeofday", name) == 0) {
+        vdso[res].func = VDSO_gettimeofday;
+        vdso[res].code_size = thumb ? sizeof(__vdso_gettimeofday_thumb)
+                                    : sizeof(__vdso_gettimeofday);
+        vdso[res].code = thumb ? __vdso_gettimeofday_thumb
+                               : __vdso_gettimeofday;
+      } else if (strcmp("__vdso_clock_getres", name) == 0) {
+        vdso[res].func = VDSO_clock_getres;
+        vdso[res].code_size = thumb ? sizeof(__vdso_clock_getres_thumb)
+                                    : sizeof(__vdso_clock_getres);
+        vdso[res].code = thumb ? __vdso_clock_getres_thumb
+                               : __vdso_clock_getres;
+      } else {
+        continue;
+      }
+      vdso[res].poison = thumb ? vdsoPoisonThumb : vdsoPoison;
 #elif defined(__aarch64__)
       if (strcmp("__kernel_clock_gettime", name) == 0) {
         vdso[res].func = VDSO_clock_gettime;
@@ -588,7 +771,10 @@ int proc_get_vdso_symbols(
         continue;
       }
 #endif
-      vdso[res].offset = sym->st_value;
+#if !defined(__arm__)
+      vdso[res].poison = vdsoPoison;
+#endif
+      vdso[res].offset = sym->st_value & ~1UL; /* arm: strip the Thumb bit */
       vdso[res].size = sym->st_size;
       vdso[res].alignment = alignment;
       ++res;

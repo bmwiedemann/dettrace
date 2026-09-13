@@ -97,7 +97,7 @@ void logger::writeToLog(Importance imp, std::string format, ...) {
       fprintf(fin, "[3]INTER ");
       break;
     }
-    fprintf(fin, "%lx ", logEntryID);
+    fprintf(fin, "%llx ", (unsigned long long)logEntryID);
     logEntryID++;
 
     if (padding) {

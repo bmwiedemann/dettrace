@@ -135,5 +135,32 @@ static inline bool isSentinelSyscall(long num) {
 #ifndef SYS_accept
 #define SYS_accept SYSCALL_SENTINEL(36)
 #endif
+#ifndef SYS_getrlimit
+#define SYS_getrlimit SYSCALL_SENTINEL(37)
+#endif
+#ifndef SYS_mmap
+#define SYS_mmap SYSCALL_SENTINEL(38)
+#endif
+
+/*
+ * 32-bit architectures (i386, arm). glibc does every stat through statx
+ * there since 2.33; the legacy stat/fstat/lstat numbers fill an obsolete
+ * kernel struct nobody uses anymore, while the *64 variants fill the
+ * kernel's struct stat64, which is also glibc's struct stat64 (and its
+ * struct stat under _FILE_OFFSET_BITS=64). The handlers work on struct
+ * stat64 (identical to struct stat on 64-bit), so let the stat family
+ * mean the *64 numbers; the legacy numbers get no seccomp rule and any
+ * use of them errors out loudly instead of being misparsed.
+ */
+#ifdef SYS_stat64
+#define DETTRACE_32BIT_SYSCALL_ABI 1
+#undef SYS_stat
+#define SYS_stat SYS_stat64
+#undef SYS_lstat
+#define SYS_lstat SYS_lstat64
+#undef SYS_fstat
+#define SYS_fstat SYS_fstat64
+#define SYS_newfstatat SYS_fstatat64
+#endif
 
 #endif

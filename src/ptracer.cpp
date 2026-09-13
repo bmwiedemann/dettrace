@@ -3,7 +3,7 @@ extern "C" {
 #include <string.h>
 #include <elf.h>
 #include <sys/ptrace.h>
-#if defined(__x86_64__)
+#if defined(__x86_64__) || defined(__i386__)
 #include <sys/reg.h> /* For constants ORIG_EAX, etc */
 #endif
 #include <sys/syscall.h> /* For SYS_write, etc */
@@ -46,13 +46,15 @@ uint64_t ptracer::arg6() { return syscallArgs[5]; }
 void ptracer::captureSyscallArgs() {
   // At the syscall-entry stop every argument register still holds the
   // value the tracee passed (on s390 the first argument is in gprs[2]
-  // which is not yet clobbered here).
-  syscallArgs[0] = REG_ORIG_ARG1(regs);
-  syscallArgs[1] = REG_ARG2(regs);
-  syscallArgs[2] = REG_ARG3(regs);
-  syscallArgs[3] = REG_ARG4(regs);
-  syscallArgs[4] = REG_ARG5(regs);
-  syscallArgs[5] = REG_ARG6(regs);
+  // which is not yet clobbered here). Go through unsigned long: i386's
+  // struct user_regs_struct has signed fields, and a pointer or ioctl
+  // request with the top bit set must not be sign-extended to 64 bits.
+  syscallArgs[0] = (unsigned long)REG_ORIG_ARG1(regs);
+  syscallArgs[1] = (unsigned long)REG_ARG2(regs);
+  syscallArgs[2] = (unsigned long)REG_ARG3(regs);
+  syscallArgs[3] = (unsigned long)REG_ARG4(regs);
+  syscallArgs[4] = (unsigned long)REG_ARG5(regs);
+  syscallArgs[5] = (unsigned long)REG_ARG6(regs);
 }
 
 void ptracer::saveSyscallArgs(uint64_t out[6]) const {
@@ -92,7 +94,7 @@ void ptracer::setRegs(struct user_regs_struct newValues) {
 }
 
 void ptracer::readRegisters(pid_t pid, struct user_regs_struct& regs) {
-#if defined(__x86_64__)
+#if defined(__x86_64__) || defined(__i386__)
   doPtrace(PTRACE_GETREGS, pid, nullptr, &regs);
 #else
   struct iovec iov = {&regs, sizeof(regs)};
@@ -102,7 +104,7 @@ void ptracer::readRegisters(pid_t pid, struct user_regs_struct& regs) {
 }
 
 void ptracer::writeRegisters(pid_t pid, struct user_regs_struct& regs) {
-#if defined(__x86_64__)
+#if defined(__x86_64__) || defined(__i386__)
   doPtrace(PTRACE_SETREGS, pid, nullptr, &regs);
 #else
   struct iovec iov = {&regs, sizeof(regs)};
@@ -145,7 +147,7 @@ uint64_t ptracer::getSystemCallNumber() {
 #if defined(__s390x__)
   return currentSyscall;
 #else
-  return REG_SYSNUM(regs);
+  return (unsigned long)REG_SYSNUM(regs);
 #endif
 }
 
@@ -169,6 +171,8 @@ void ptracer::setReturnRegister(uint64_t retVal) {
   regsSetReturnValue(regs, (long)retVal);
   writeRegisters(traceePid, regs);
 }
+
+void ptracer::refreshRegisters() { readRegisters(traceePid, regs); }
 
 void ptracer::updateState(pid_t newPid) {
   traceePid = newPid;
@@ -208,7 +212,7 @@ string ptracer::readTraceeCString(
 
   // Read long-sized chunks of memory at at time.
   while (!done) {
-    int64_t result =
+    long result =
         doPtrace(PTRACE_PEEKDATA, traceePid, readAddress.ptr, nullptr);
     ptracePeeks++;
     const char *p = (const char *)&result;
@@ -259,9 +263,9 @@ long ptracer::doPtrace(
 }
 
 void ptracer::changeSystemCall(uint64_t val) {
-#if defined(__x86_64__)
-  regs.orig_rax = val;
-  regs.rax = val;
+#if defined(__x86_64__) || defined(__i386__)
+  REG_SYSNUM(regs) = val;
+  REG_RETVAL(regs) = val;
 #elif defined(__s390x__)
   // At a syscall stop the kernel takes the number of the system call to
   // execute from gprs[2]: __poke_user (arch/s390/kernel/ptrace.c) rewrites
@@ -280,6 +284,21 @@ void ptracer::changeSystemCall(uint64_t val) {
   // Writing x8 does not change which system call the kernel executes for
   // the current syscall stop, that takes a dedicated regset write.
   writeSyscallNumber(traceePid, (long)val);
+#endif
+#if defined(__arm__)
+  // Like aarch64, arm takes the number of the system call to execute
+  // from the tracer through a dedicated request; r7 is only read by a
+  // re-executed svc. The sentinels of syscallCompat.hpp must not reach
+  // the kernel here: a 32-bit kernel masks the number with 0xfffff, which
+  // turns them into ARM-private numbers it answers with SIGILL. Hand it a
+  // number that is simply not a syscall instead (above the table, below
+  // the private range), which native and arm64-compat kernels alike turn
+  // into -ENOSYS; r7 keeps the sentinel so the post-hook still dispatches
+  // on it.
+  long kernelNr = isSentinelSyscall((long)val) ? 0xeffff : (long)val;
+  doPtrace(
+      (enum __ptrace_request)PTRACE_SET_SYSCALL, traceePid, nullptr,
+      (void*)kernelNr);
 #endif
 #if defined(__s390x__)
   currentSyscall = (long)val;
@@ -336,24 +355,32 @@ void ptracer::writeIp(uint64_t val) {
   writeRegisters(traceePid, regs);
 }
 
-#if defined(__x86_64__)
+size_t ptracer::syscallInsnLength() const {
+#if defined(__arm__)
+  return (REG_CPSR(regs) & ARM_CPSR_THUMB) ? 2 : 4;
+#else
+  return syscallInsnSize;
+#endif
+}
+
+#if defined(__x86_64__) || defined(__i386__)
 void ptracer::writeRax(uint64_t val) {
   REG_RETVAL(regs) = val;
   writeRegisters(traceePid, regs);
 }
 
 void ptracer::writeRbx(uint64_t val) {
-  regs.rbx = val;
+  REG_BX(regs) = val;
   writeRegisters(traceePid, regs);
 }
 
 void ptracer::writeRdx(uint64_t val) {
-  regs.rdx = val;
+  REG_DX(regs) = val;
   writeRegisters(traceePid, regs);
 }
 
 void ptracer::writeRcx(uint64_t val) {
-  regs.rcx = val;
+  REG_CX(regs) = val;
   writeRegisters(traceePid, regs);
 }
 #endif

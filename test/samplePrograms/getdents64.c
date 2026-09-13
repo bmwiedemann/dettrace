@@ -47,7 +47,7 @@ main(int argc, char *argv[])
     printf("i-node#  file type  d_reclen  d_off   d_name\n");
     for (bpos = 0; bpos < nread;) {
       d = (struct linux_dirent64 *) (buf + bpos);
-      printf("%8ld  ", d->d_ino);
+      printf("%8llu  ", (unsigned long long)d->d_ino);
       d_type = *(buf + bpos + d->d_reclen - 1);
       printf("%-10s ", (d_type == DT_REG) ?  "regular" :
              (d_type == DT_DIR) ?  "directory" :

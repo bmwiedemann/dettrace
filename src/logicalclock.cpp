@@ -24,7 +24,8 @@ timespec logical_clock::to_timespec(const time_point& t) noexcept {
   const auto ns = std::chrono::time_point_cast<std::chrono::nanoseconds>(t) -
                   std::chrono::time_point_cast<std::chrono::nanoseconds>(secs);
 
-  return timespec{secs.time_since_epoch().count(), ns.count()};
+  // The casts narrow to the 32-bit fields on i386 and arm.
+  return timespec{(time_t)secs.time_since_epoch().count(), (long)ns.count()};
 }
 
 logical_clock::time_point logical_clock::from_timespec(
@@ -40,8 +41,8 @@ timeval logical_clock::to_timeval(const time_point& t) noexcept {
       std::chrono::time_point_cast<std::chrono::microseconds>(t) -
       std::chrono::time_point_cast<std::chrono::microseconds>(secs);
 
-  return timeval{.tv_sec = secs.time_since_epoch().count(),
-                 .tv_usec = usecs.count()};
+  return timeval{.tv_sec = (time_t)secs.time_since_epoch().count(),
+                 .tv_usec = (suseconds_t)usecs.count()};
 }
 
 logical_clock::time_point logical_clock::from_timeval(

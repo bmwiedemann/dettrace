@@ -7,6 +7,7 @@
 #define _GNU_SOURCE
 #include <errno.h>
 #include <fcntl.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/timerfd.h>
@@ -74,13 +75,15 @@ int main(void) {
   }
   int tcopy = dup3(tfd, 11, 0);
   printf("dup3(timerfd, 11) = %d\n", tcopy);
-  unsigned long expired = 0;
+  uint64_t expired = 0; // a timerfd read is 8 bytes on every architecture
   n = read(tcopy, &expired, sizeof(expired));
   if (n != (ssize_t)sizeof(expired)) {
     printf(
         "read from the timerfd duplicate failed: %zd %s\n", n, strerror(errno));
     return 1;
   }
-  printf("read from the timerfd duplicate: expired %lu\n", expired);
+  printf(
+      "read from the timerfd duplicate: expired %llu\n",
+      (unsigned long long)expired);
   return 0;
 }

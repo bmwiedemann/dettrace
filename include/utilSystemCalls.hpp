@@ -25,7 +25,8 @@ bool preemptIfBlocked(
  * Utility functions related to dettraceSystemCall.cpp, that is, helper
  * functions for the pre and post hooks.
  */
-void zeroOutStatfs(struct statfs& stats);
+template <typename StatfsT>
+void zeroOutStatfs(StatfsT& stats);
 
 /**
  * All stat functions can be handled the same, newfstatat is special. Pass the

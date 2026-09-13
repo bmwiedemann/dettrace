@@ -21,8 +21,8 @@ using namespace std;
  * As per getdents(2)
  */
 struct linux_dirent {
-  long d_ino; /*< inode number */
-  off_t d_off; /*< offset to next structure */
+  unsigned long d_ino; /*< inode number, a word like in the kernel */
+  unsigned long d_off; /*< offset to next structure */
   unsigned short d_reclen; /*< Size of this dirent */
   char d_name[]; /*< Filename (null-terminated) */
 };

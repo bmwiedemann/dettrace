@@ -4,7 +4,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <sys/ptrace.h>
-#if defined(__x86_64__)
+#if defined(__x86_64__) || defined(__i386__)
 #include <sys/reg.h> /* For constants ORIG_EAX, etc */
 #endif
 #include <sys/stat.h>
@@ -30,7 +30,8 @@
 
 using namespace std;
 
-const size_t wordSize = 8; /**< Size of word, 8 bytes for x86_64. */
+const size_t wordSize = sizeof(long); /**< Size of a ptrace word: 8 bytes on
+                                         64-bit, 4 on i386 and arm. */
 
 /**
  * Architecture-independent accessors for the fields of
@@ -136,21 +137,78 @@ const size_t syscallInsnSize = 2;
 const size_t syscallInsnSize = 4;
 #define BREAK_INSN 0x00100073UL /* ebreak */
 #define SYSCALL_INSN 0x00000073UL /* ecall */
+#elif defined(__i386__)
+/* 32-bit x86: the arguments are in ebx, ecx, edx, esi, edi, ebp, the
+   number in eax (orig_eax at a stop), the result in eax; "int $0x80",
+   "sysenter" and "syscall" are all 2 bytes and the kernel leaves the pc
+   behind the int $0x80 of the vDSO's __kernel_vsyscall for the latter
+   two, so replaying by re-executing the 2 bytes before the pc works for
+   every entry path. */
+#define REG_SYSNUM(r) ((r).orig_eax)
+#define REG_RETVAL(r) ((r).eax)
+#define REG_ARG1(r) ((r).ebx)
+#define REG_ARG2(r) ((r).ecx)
+#define REG_ARG3(r) ((r).edx)
+#define REG_ARG4(r) ((r).esi)
+#define REG_ARG5(r) ((r).edi)
+#define REG_ARG6(r) ((r).ebp)
+#define REG_IP(r) ((r).eip)
+#define REG_SP(r) ((r).esp)
+const size_t syscallInsnSize = 2;
+#elif defined(__arm__)
+/* glibc's sys/user.h calls the register struct user_regs on arm, with
+   the 18 words of the kernel's struct pt_regs: r0-r15, cpsr, orig_r0.
+   EABI passes the syscall number in r7, the arguments in r0-r5 and the
+   result in r0; the kernel keeps the first argument in orig_r0. */
+#define user_regs_struct user_regs
+#define REG_SYSNUM(r) ((r).uregs[7])
+#define REG_RETVAL(r) ((r).uregs[0])
+#define REG_ARG1(r) ((r).uregs[0])
+#define REG_ARG2(r) ((r).uregs[1])
+#define REG_ARG3(r) ((r).uregs[2])
+#define REG_ARG4(r) ((r).uregs[3])
+#define REG_ARG5(r) ((r).uregs[4])
+#define REG_ARG6(r) ((r).uregs[5])
+#define REG_IP(r) ((r).uregs[15])
+#define REG_SP(r) ((r).uregs[13])
+#define REG_CPSR(r) ((r).uregs[16])
+#define REG_ORIG_ARG1(r) ((r).uregs[17])
+/* User code is ARM or Thumb per the cpsr T bit, and glibc for armv7 is
+   Thumb-2, so the syscall instruction is "svc 0" as 4 or 2 bytes, see
+   ptracer::syscallInsnLength. */
+#define ARM_CPSR_THUMB 0x20UL
+const size_t syscallInsnSize = 4;
+/* The kernel's software breakpoints (what gdb uses): the undefined
+   instructions the arm and the arm64 compat undef handlers turn into a
+   SIGTRAP with the pc still on them. bkpt itself needs debug hardware
+   support on 32-bit kernels. */
+#define BREAK_INSN 0xe7f001f0UL /* udf #0x10 */
+#define SYSCALL_INSN 0xef000000UL /* svc 0 */
+#define THUMB_BREAK_INSN 0xde01U /* udf #1 */
+#define THUMB_SYSCALL_INSN 0xdf00U /* svc 0 */
+/* Changes the system call the kernel executes at the current stop, r7
+   only matters for a re-executed svc (compare NT_ARM_SYSTEM_CALL on
+   aarch64). glibc's sys/ptrace.h has it, the kernel accepts it for
+   native and for arm64 compat tracees alike. */
+#ifndef PTRACE_SET_SYSCALL
+#define PTRACE_SET_SYSCALL 23
+#endif
 #else
-#error "dettrace only supports x86_64, aarch64, powerpc64le, riscv64 and s390x"
+#error "dettrace only supports x86_64, i386, aarch64, arm, powerpc64le, riscv64 and s390x"
 #endif
 
-/**
- * Word written over the vDSO text to trap any call into a function we
- * did not replace, see execution::disableVdso. Whole-word fill of the
- * architecture's breakpoint instruction.
- */
+/* The general purpose registers named by the x86 instructions dettrace
+   emulates (rdtsc, rdtscp, cpuid), see execution::handleSignal. */
 #if defined(__x86_64__)
-const unsigned long vdsoPoison = 0xccccccccccccccccUL; /* int3 */
-#elif defined(__s390x__)
-const unsigned long vdsoPoison = 0x0001000100010001UL; /* breakpoint */
-#else
-const unsigned long vdsoPoison = BREAK_INSN | (BREAK_INSN << 32);
+#define REG_AX(r) ((r).rax)
+#define REG_BX(r) ((r).rbx)
+#define REG_CX(r) ((r).rcx)
+#define REG_DX(r) ((r).rdx)
+#elif defined(__i386__)
+#define REG_AX(r) ((r).eax)
+#define REG_BX(r) ((r).ebx)
+#define REG_CX(r) ((r).ecx)
+#define REG_DX(r) ((r).edx)
 #endif
 
 /* The value of the first system-call argument at syscall entry. On most
@@ -166,41 +224,72 @@ const unsigned long vdsoPoison = BREAK_INSN | (BREAK_INSN << 32);
  * the entry point after execve to run system calls inside the tracee,
  * see execution::handleExecEvent. The offsets describe where the pc
  * points relative to the stub start: after the first breakpoint trap
- * (stubFirstTrapOff), where the syscall instruction is (stubSyscallOff)
- * and after the trailing breakpoint trap (stubEndOff). x86_64 and s390x
- * advance the pc past a trapping breakpoint, the others do not.
+ * (firstTrapOff), where the syscall instruction is (syscallOff) and
+ * after the trailing breakpoint trap (endOff). x86 and s390x advance
+ * the pc past a trapping breakpoint, the others do not. arm has two
+ * instruction sets, syscallStubFor picks the one the tracee runs in.
  */
+struct SyscallStub {
+  const unsigned char* code;
+  size_t size;
+  unsigned long firstTrapOff;
+  unsigned long syscallOff;
+  unsigned long endOff;
+};
+
 #if defined(__x86_64__)
-static const unsigned char syscallStub[] = {0xcc, 0x0f, 0x05, 0xcc};
-const unsigned long stubFirstTrapOff = 1;
-const unsigned long stubSyscallOff = 1;
-const unsigned long stubEndOff = 4;
+static const unsigned char syscallStubCode[] = {0xcc, 0x0f, 0x05, 0xcc};
+static const SyscallStub syscallStub = {syscallStubCode, 4, 1, 1, 4};
+#elif defined(__i386__)
+static const unsigned char syscallStubCode[] = {0xcc, 0xcd, 0x80, 0xcc};
+static const SyscallStub syscallStub = {syscallStubCode, 4, 1, 1, 4};
 #elif defined(__aarch64__)
-static const unsigned char syscallStub[] = {0x00, 0x00, 0x20, 0xd4, 0x01, 0x00,
-                                            0x00, 0xd4, 0x00, 0x00, 0x20, 0xd4};
-const unsigned long stubFirstTrapOff = 0;
-const unsigned long stubSyscallOff = 4;
-const unsigned long stubEndOff = 8;
+static const unsigned char syscallStubCode[] = {0x00, 0x00, 0x20, 0xd4,
+                                                0x01, 0x00, 0x00, 0xd4,
+                                                0x00, 0x00, 0x20, 0xd4};
+static const SyscallStub syscallStub = {syscallStubCode, 12, 0, 4, 8};
+#elif defined(__arm__)
+static const unsigned char armSyscallStubCode[] = {0xf0, 0x01, 0xf0, 0xe7,
+                                                   0x00, 0x00, 0x00, 0xef,
+                                                   0xf0, 0x01, 0xf0, 0xe7};
+static const SyscallStub armSyscallStub = {armSyscallStubCode, 12, 0, 4, 8};
+static const unsigned char thumbSyscallStubCode[] = {0x01, 0xde, 0x00,
+                                                     0xdf, 0x01, 0xde};
+static const SyscallStub thumbSyscallStub = {thumbSyscallStubCode, 6, 0, 2,
+                                             4};
 #elif defined(__powerpc64__)
-static const unsigned char syscallStub[] = {0x08, 0x00, 0xe0, 0x7f, 0x02, 0x00,
-                                            0x00, 0x44, 0x08, 0x00, 0xe0, 0x7f};
-const unsigned long stubFirstTrapOff = 0;
-const unsigned long stubSyscallOff = 4;
-const unsigned long stubEndOff = 8;
+static const unsigned char syscallStubCode[] = {0x08, 0x00, 0xe0, 0x7f,
+                                                0x02, 0x00, 0x00, 0x44,
+                                                0x08, 0x00, 0xe0, 0x7f};
+static const SyscallStub syscallStub = {syscallStubCode, 12, 0, 4, 8};
 #elif defined(__riscv) && __riscv_xlen == 64
-static const unsigned char syscallStub[] = {0x73, 0x00, 0x10, 0x00, 0x73, 0x00,
-                                            0x00, 0x00, 0x73, 0x00, 0x10, 0x00};
-const unsigned long stubFirstTrapOff = 0;
-const unsigned long stubSyscallOff = 4;
-const unsigned long stubEndOff = 8;
+static const unsigned char syscallStubCode[] = {0x73, 0x00, 0x10, 0x00,
+                                                0x73, 0x00, 0x00, 0x00,
+                                                0x73, 0x00, 0x10, 0x00};
+static const SyscallStub syscallStub = {syscallStubCode, 12, 0, 4, 8};
 #elif defined(__s390x__)
 /* 0x0001 is the s390 breakpoint instruction, the kernel turns the
    resulting operation exception into a SIGTRAP. */
-static const unsigned char syscallStub[] = {0x00, 0x01, 0x0a, 0x00, 0x00, 0x01};
-const unsigned long stubFirstTrapOff = 2;
-const unsigned long stubSyscallOff = 2;
-const unsigned long stubEndOff = 6;
+static const unsigned char syscallStubCode[] = {0x00, 0x01, 0x0a,
+                                                0x00, 0x00, 0x01};
+static const SyscallStub syscallStub = {syscallStubCode, 6, 2, 2, 6};
 #endif
+
+/* Room for the largest stub, 12 bytes, in words of the smallest size. */
+const size_t maxSyscallStubWords = 3;
+
+/**
+ * The stub to inject into a tracee stopped with the given registers.
+ */
+static inline const SyscallStub& syscallStubFor(
+    const struct user_regs_struct& r) {
+#if defined(__arm__)
+  return (REG_CPSR(r) & ARM_CPSR_THUMB) ? thumbSyscallStub : armSyscallStub;
+#else
+  (void)r;
+  return syscallStub;
+#endif
+}
 
 /**
  * Return value of the current/last system call in the usual Linux
@@ -214,6 +303,15 @@ static inline long regsReturnValue(const struct user_regs_struct& r) {
 #else
   return (long)REG_RETVAL(r);
 #endif
+}
+
+/**
+ * Whether a raw system call return value is -errno. Not simply "negative":
+ * on 32-bit architectures mmap hands out addresses above 2 GiB, which
+ * are negative as a long.
+ */
+static inline bool syscallFailed(long ret) {
+  return (unsigned long)ret >= (unsigned long)-4095;
 }
 
 static inline void regsSetReturnValue(struct user_regs_struct& r, long val) {
@@ -414,9 +512,16 @@ public:
    */
   void writeIp(uint64_t val);
 
-#if defined(__x86_64__)
   /**
-   * Write  value to rax register. Use setReturnRegister() to set a
+   * Size in bytes of the syscall instruction the tracee stopped behind,
+   * to rewind the pc onto it for a replay. A constant everywhere but on
+   * arm, where Thumb code has a 2 byte svc.
+   */
+  size_t syscallInsnLength() const;
+
+#if defined(__x86_64__) || defined(__i386__)
+  /**
+   * Write  value to rax (eax) register. Use setReturnRegister() to set a
    * system call's return value; on some architectures that is not just
    * a register write.
    * @param val new rax register value
@@ -533,6 +638,13 @@ public:
   inline static bool isPtraceEvent(int status, enum __ptrace_eventcodes event) {
     return (status >> 8) == (SIGTRAP | (event << 8));
   }
+
+  /**
+   * Re-read the current tracee's registers into the cache after they were
+   * written behind its back (e.g. cancelSystemCall's restore), without
+   * touching the cached syscall arguments or number.
+   */
+  void refreshRegisters();
 
   /**
    * Update registers to the state of the passed pid. This is now the new pid.

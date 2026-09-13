@@ -8,6 +8,9 @@
 #include <sys/personality.h>
 #include <sys/ptrace.h>
 #include <sys/syscall.h> /* For SYS_write, etc */
+#if defined(__arm__)
+#include <asm/unistd.h> /* __ARM_NR_set_tls and the other private calls */
+#endif
 
 #include "syscallCompat.hpp"
 
@@ -79,7 +82,9 @@ void seccomp::loadRules(bool debug, bool convertUids) {
   intercept(SYS_epoll_wait);
   intercept(SYS_epoll_pwait);
   // Advise on access patter by program of file.
+#ifdef SYS_fadvise64
   noIntercept(SYS_fadvise64);
+#endif
   noIntercept(SYS_fallocate);
   // Variants of regular function that use file descriptor instead of char*
   // path.
@@ -292,7 +297,12 @@ void seccomp::loadRules(bool debug, bool convertUids) {
   intercept(SYS_flistxattr, debug);
   intercept(SYS_fcntl);
   intercept(SYS_fstat);
+#ifndef DETTRACE_32BIT_SYSCALL_ABI
+  // On i386 and arm glibc uses (f)statfs64 (below) and the legacy calls
+  // fill a small struct that is not our struct statfs (built with
+  // _FILE_OFFSET_BITS=64), so they get no rule there.
   intercept(SYS_fstatfs);
+#endif
 
   intercept(SYS_futex);
   intercept(SYS_getcwd, debug);
@@ -369,12 +379,20 @@ void seccomp::loadRules(bool debug, bool convertUids) {
 
   intercept(SYS_sendto);
   // Defintely not deteministic </3
+#ifdef SYS__newselect
+  // On i386 and arm select(2) is _newselect; the i386 number named select
+  // is the ancient single-struct-argument form, which gets no rule.
+  intercept(SYS__newselect);
+#else
   intercept(SYS_select);
+#endif
   // TODO
   intercept(SYS_set_robust_list);
   intercept(SYS_stat);
   intercept(SYS_statx);
+#ifndef DETTRACE_32BIT_SYSCALL_ABI
   intercept(SYS_statfs);
+#endif
 #ifdef SYS_statfs64
   // powerpc keeps the statfs64/fstatfs64 variants; determinize like
   // statfs/fstatfs.
@@ -424,6 +442,80 @@ void seccomp::loadRules(bool debug, bool convertUids) {
   // noIntercept(SYS_shmat);
   // noIntercept(SYS_shmdt);
   // noIntercept(SYS_shmctl);
+
+  // The 32-bit architectures' variants of calls handled above: the
+  // large-file ones, the 32-bit-uid ones, and the 64-bit time_t ones glibc
+  // uses since 2.34 (see isTime64Syscall for their struct layout). The
+  // stat family is redirected to its *64 numbers in syscallCompat.hpp.
+#ifdef SYS_mmap2
+  noIntercept(SYS_mmap2);
+#endif
+#ifdef SYS_fcntl64
+  intercept(SYS_fcntl64);
+#endif
+#ifdef SYS_ugetrlimit
+  intercept(SYS_ugetrlimit);
+#endif
+#ifdef SYS_sendfile64
+  noIntercept(SYS_sendfile64);
+  noIntercept(SYS_truncate64);
+  noIntercept(SYS_ftruncate64);
+#endif
+#ifdef SYS_fadvise64_64
+  noIntercept(SYS_fadvise64_64);
+#endif
+#ifdef SYS_arm_fadvise64_64
+  noIntercept(SYS_arm_fadvise64_64);
+#endif
+#ifdef SYS_chown32
+  intercept(SYS_chown32, convertUids);
+  intercept(SYS_lchown32, convertUids);
+  intercept(SYS_fchown32, convertUids);
+  noIntercept(SYS_getuid32);
+  noIntercept(SYS_geteuid32);
+  noIntercept(SYS_getgid32);
+  noIntercept(SYS_getegid32);
+  noIntercept(SYS_getresuid32);
+  noIntercept(SYS_getresgid32);
+  noIntercept(SYS_getgroups32);
+  noIntercept(SYS_setuid32);
+  noIntercept(SYS_setgid32);
+  noIntercept(SYS_setreuid32);
+  noIntercept(SYS_setregid32);
+  noIntercept(SYS_setresuid32);
+  noIntercept(SYS_setresgid32);
+  noIntercept(SYS_setfsuid32);
+  noIntercept(SYS_setfsgid32);
+  noIntercept(SYS_setgroups32);
+#endif
+#ifdef SYS_clock_gettime64
+  intercept(SYS_clock_gettime64);
+  noIntercept(SYS_clock_getres_time64);
+  intercept(SYS_clock_nanosleep_time64);
+  intercept(SYS_futex_time64);
+  intercept(SYS_ppoll_time64);
+  intercept(SYS_pselect6_time64);
+  intercept(SYS_rt_sigtimedwait_time64);
+  intercept(SYS_utimensat_time64);
+  intercept(SYS_timer_gettime64);
+  intercept(SYS_timer_settime64);
+  intercept(SYS_timerfd_gettime64);
+  intercept(SYS_timerfd_settime64);
+#endif
+  // Thread-local storage setup at process start (glibc's TLS_INIT_TP) and
+  // the other architecture-private calls.
+#ifdef SYS_set_thread_area
+  noIntercept(SYS_set_thread_area);
+  noIntercept(SYS_get_thread_area);
+  noIntercept(SYS_modify_ldt);
+#endif
+#ifdef __ARM_NR_set_tls
+  noIntercept(__ARM_NR_set_tls);
+  noIntercept(__ARM_NR_get_tls);
+  // Instruction cache maintenance for JITs and libgcc's __clear_cache.
+  noIntercept(__ARM_NR_cacheflush);
+  noIntercept(__ARM_NR_breakpoint);
+#endif
 }
 
 void seccomp::noIntercept(int systemCall) {

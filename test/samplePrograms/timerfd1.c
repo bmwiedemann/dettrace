@@ -1,3 +1,4 @@
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/timerfd.h>
@@ -42,16 +43,17 @@ int main(int argc, char* argv[]) {
   }
 
   for (int i = 0; i < 10; i++) {
-    unsigned long expired = 0;
-    // Returns an 8-byte integer with the number of timer expirations:
-    ssize_t n = read(fd, &expired, sizeof(unsigned long));
-    if (n != sizeof(unsigned long)) {
+    uint64_t expired = 0;
+    // Returns an 8-byte integer with the number of timer expirations (and
+    // EINVAL for a smaller buffer, so not an unsigned long on 32-bit):
+    ssize_t n = read(fd, &expired, sizeof(expired));
+    if (n != (ssize_t)sizeof(uint64_t)) {
       fprintf(
-          stderr, "read timerfd returned: %ld, expected: %ld\n", n,
-          sizeof(unsigned long));
+          stderr, "read timerfd returned: %zd, expected: %zu\n", n,
+          sizeof(uint64_t));
       exit(1);
     }
-    printf("[%d] read expired count: %ld\n", i, expired);
+    printf("[%d] read expired count: %llu\n", i, (unsigned long long)expired);
   }
 
   assert(timerfd_gettime(fd, &it) == 0);

@@ -42,12 +42,15 @@ typedef long (*SysExit)(
  * so that they cannot drift apart and contradict each other. */
 /* One CPU: this is what the CPUID tables already report (leaf 0xB says one
  * logical processor) and what getcpu/sched_getcpu already answer. Must stay
- * below 64, since the affinity mask below is a single word. */
+ * below 32, since the affinity mask below is a single word, also on the
+ * 32-bit architectures. */
 #define DETTRACE_NR_CPUS 1
 /* Bits 0..DETTRACE_NR_CPUS-1: the affinity mask of the canonical machine.
  * Written as a shifted-down all-ones word so that it stays defined at
- * DETTRACE_NR_CPUS == 64, where 1UL << 64 would not be. */
-#define DETTRACE_CPU_MASK_WORD0 (~0UL >> (64 - DETTRACE_NR_CPUS))
+ * DETTRACE_NR_CPUS == word size, where 1UL << 64 would not be. Words are
+ * 32 bits on i386 and arm. */
+#define DETTRACE_CPU_MASK_WORD0                                             \
+  (~0UL >> (8 * sizeof(unsigned long) - DETTRACE_NR_CPUS))
 #define DETTRACE_HOSTNAME "reproducible"
 /* uname(2) has always reported an empty domain name; a stock Linux box says
  * "(none)". Keep the empty string so the two stay consistent. */
