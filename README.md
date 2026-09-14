@@ -39,6 +39,21 @@ The latest version of Dettrace can be found on GitHub at https://github.com/bmwi
 ### Hardware dependencies
 The Dettrace prototype currently only works for x86-64, i586, aarch64, armv7/armv6, powerpc, ppc64, ppc64le, s390x and maybe riscv64 archs. While not strictly necessary, portability guarantees are strongest when the CPU supports intercepting certain nondeterministic CPU instructions, e.g., CPUID.
 
+sparc is not portable to and was deliberately left out. Dettrace selects
+the system calls it wants to see with a seccomp-bpf filter whose matches
+return SECCOMP_RET_TRACE, and sparc has no seccomp-bpf: the kernel
+selects `HAVE_ARCH_SECCOMP` but not `HAVE_ARCH_SECCOMP_FILTER`, so
+`syscall_trace_enter()` only ever calls `secure_computing_strict()` and
+there is no `PTRACE_EVENT_SECCOMP` to receive. libseccomp has no sparc
+architecture either, so `seccomp_init()`, `seccomp_arch_native()` and the
+syscall name table dettrace uses are missing as well and it cannot even
+be linked there. Ports of the two would also have to deal with the
+syscall-exit stop discarding a tracer's writes to `%tpc`/`%tnpc`: the
+kernel reloads both from values it read before the stop
+(`linux_syscall_trace2` in arch/sparc/kernel/syscalls.S), so replaying a
+system call has to be arranged at the entry stop instead of by rewinding
+the program counter afterwards.
+
 ### Software dependencies
 Dettrace works well with kernel versions 4.8 through 7.2 (only minor modifications should be necessary to allow Dettrace to work in newer kernel versions). Kernel version < 4.8 use a slower
 ptrace implementation (more details in publication) making overall execution of Dettrace slower. Kernel version >= 4.12 are required for OS support for CPUID interception. Currently Dettrace has a few dependencies:
