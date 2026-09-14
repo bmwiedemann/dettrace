@@ -39,6 +39,15 @@ The latest version of Dettrace can be found on GitHub at https://github.com/bmwi
 ### Hardware dependencies
 The Dettrace prototype currently only works for x86-64, i586, x32, aarch64, armv7/armv6, hppa, powerpc, ppc64, ppc64le, s390x, loongarch64 and maybe riscv64 archs. While not strictly necessary, portability guarantees are strongest when the CPU supports intercepting certain nondeterministic CPU instructions, e.g., CPUID.
 
+Two build requirements come with the newer ports: loongarch64 needs
+libseccomp 2.6 or newer, which is where `SCMP_ARCH_LOONGARCH64` appeared,
+and x32 needs a libseccomp built for x32 itself so that its native
+architecture is the x32 one. A 32-bit build has to use 32-bit `time_t`
+(`-D_TIME_BITS=32`), since dettrace passes its own `struct timespec`,
+`struct timeval` and `struct stat64` to the tracee and the legacy system
+calls it emulates take the kernel's 32-bit forms; the build stops with a
+message if they do not match.
+
 sparc is not portable to and was deliberately left out. Dettrace selects
 the system calls it wants to see with a seccomp-bpf filter whose matches
 return SECCOMP_RET_TRACE, and sparc has no seccomp-bpf: the kernel
