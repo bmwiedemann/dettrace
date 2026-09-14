@@ -37,7 +37,7 @@ reproducible container.
 The latest version of Dettrace can be found on GitHub at https://github.com/bmwiedemann/dettrace.
 
 ### Hardware dependencies
-The Dettrace prototype currently only works for x86-64, i586, x32, aarch64, armv7/armv6, hppa, powerpc, ppc64, ppc64le, s390x, loongarch64 and maybe riscv64 archs. While not strictly necessary, portability guarantees are strongest when the CPU supports intercepting certain nondeterministic CPU instructions, e.g., CPUID.
+The Dettrace prototype currently only works for x86-64, i586, x32, aarch64, armv7/armv6, hppa, powerpc, ppc64, ppc64le, s390x, loongarch64, sh4 and maybe riscv64 archs. While not strictly necessary, portability guarantees are strongest when the CPU supports intercepting certain nondeterministic CPU instructions, e.g., CPUID.
 
 Two build requirements come with the newer ports: loongarch64 needs
 libseccomp 2.6 or newer, which is where `SCMP_ARCH_LOONGARCH64` appeared,

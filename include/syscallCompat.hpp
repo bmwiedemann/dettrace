@@ -146,6 +146,10 @@ static inline bool isSentinelSyscall(long num) {
 #ifndef SYS_setrlimit
 #define SYS_setrlimit SYSCALL_SENTINEL(39)
 #endif
+/* SuperH never wired up clone3. */
+#ifndef SYS_clone3
+#define SYS_clone3 SYSCALL_SENTINEL(40)
+#endif
 
 /*
  * The architectures whose table calls the at-variant of stat fstatat64

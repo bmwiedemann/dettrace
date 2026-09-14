@@ -3475,6 +3475,10 @@ void unameSystemCall::handleDetPost(
     strncpy(myUts.machine, "riscv64", MEMBER_LENGTH);
 #elif defined(__loongarch64)
     strncpy(myUts.machine, "loongarch64", MEMBER_LENGTH);
+#elif defined(__sh__)
+    // What the kernel calls itself whatever the SuperH variant and
+    // endianness are, even though the port and its toolchain are sh4.
+    strncpy(myUts.machine, "sh", MEMBER_LENGTH);
 #elif defined(__hppa__)
     // What a 32-bit kernel calls itself; a 64-bit one running 32-bit
     // userspace says parisc64, which is a property of the host we do not

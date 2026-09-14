@@ -54,6 +54,19 @@ const size_t wordSize = sizeof(long); /**< Size of a ptrace word: 8 bytes on
 #endif
 
 /**
+ * The same for a 16-bit instruction, which is all SuperH and m68k have.
+ */
+#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+#define INSN16(w)                                                          \
+  (unsigned char)(((unsigned long)(w) >> 8) & 0xff),                       \
+      (unsigned char)((unsigned long)(w)&0xff)
+#else
+#define INSN16(w)                                                          \
+  (unsigned char)((unsigned long)(w)&0xff),                                \
+      (unsigned char)(((unsigned long)(w) >> 8) & 0xff)
+#endif
+
+/**
  * Architecture-independent accessors for the fields of
  * struct user_regs_struct, plus the size of the syscall instruction
  * ("syscall" on x86_64, "svc #0" on aarch64).
@@ -159,6 +172,34 @@ const size_t syscallInsnSize = 2;
 const size_t syscallInsnSize = 4;
 #define BREAK_INSN 0x00100073UL /* ebreak */
 #define SYSCALL_INSN 0x00000073UL /* ecall */
+#elif defined(__sh__)
+/* SuperH: glibc's sys/user.h has no struct user_regs_struct, ptrace
+   works on the kernel's struct pt_regs, which is also what NT_PRSTATUS
+   holds. The arguments are in r4..r7 and then r0 and r1, the number is
+   in r3 and the result in r0 -- so the fifth argument shares a register
+   with the result and only the cached arguments survive into a
+   post-hook. The kernel reads the number back out of r3 after the trace
+   stop, and leaves r0 alone there, so nothing needs an orig register. */
+#include <asm/ptrace.h>
+#define user_regs_struct pt_regs
+#define REG_SYSNUM(r) ((r).regs[3])
+#define REG_RETVAL(r) ((r).regs[0])
+#define REG_ARG1(r) ((r).regs[4])
+#define REG_ARG2(r) ((r).regs[5])
+#define REG_ARG3(r) ((r).regs[6])
+#define REG_ARG4(r) ((r).regs[7])
+#define REG_ARG5(r) ((r).regs[0])
+#define REG_ARG6(r) ((r).regs[1])
+#define REG_IP(r) ((r).pc)
+#define REG_SP(r) ((r).regs[15])
+/* The trap leaves the pc behind itself (the kernel rewinds by 2 to
+   restart a call), and the immediate only tells strace how many
+   arguments there are: 0x10 + count for a system call, while anything
+   from 0x20 up is a debug trap. 0x3c is the one the debug trap table
+   sends to breakpoint_trap_handler, which is a plain SIGTRAP. */
+const size_t syscallInsnSize = 2;
+#define BREAK_INSN 0xc33cUL /* trapa #0x3c */
+#define SYSCALL_INSN 0xc316UL /* trapa #0x16 */
 #elif defined(__hppa__)
 /* glibc has no struct user_regs_struct for parisc, the kernel uapi
    header does, and it is exactly the NT_PRSTATUS regset: the 32 general
@@ -276,7 +317,7 @@ const size_t syscallInsnSize = 4;
 #define PTRACE_SET_SYSCALL 23
 #endif
 #else
-#error "dettrace only supports x86_64, i386, x32, aarch64, arm, hppa, powerpc, riscv64, loongarch64 and s390x"
+#error "dettrace only supports x86_64, i386, x32, aarch64, arm, hppa, powerpc, riscv64, loongarch64, sh and s390x"
 #endif
 
 /* The general purpose registers named by the x86 instructions dettrace
@@ -352,6 +393,10 @@ static const SyscallStub syscallStub = {syscallStubCode, 12, 0, 4, 8};
 static const unsigned char syscallStubCode[] = {
     INSN32(BREAK_INSN), INSN32(SYSCALL_INSN), INSN32(BREAK_INSN)};
 static const SyscallStub syscallStub = {syscallStubCode, 12, 0, 4, 8};
+#elif defined(__sh__)
+static const unsigned char syscallStubCode[] = {
+    INSN16(BREAK_INSN), INSN16(SYSCALL_INSN), INSN16(BREAK_INSN)};
+static const SyscallStub syscallStub = {syscallStubCode, 6, 2, 2, 6};
 #elif defined(__hppa__)
 /* The branch to the gateway page has a delay slot, and leaves the
    address behind it in r31, which is where the kernel returns to: so the

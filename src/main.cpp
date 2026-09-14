@@ -56,6 +56,8 @@
 #define DETTRACE_CPUINFO "/proc/cpuinfo.loongarch64"
 #elif defined(__hppa__)
 #define DETTRACE_CPUINFO "/proc/cpuinfo.parisc"
+#elif defined(__sh__)
+#define DETTRACE_CPUINFO "/proc/cpuinfo.sh"
 #else
 #define DETTRACE_CPUINFO nullptr
 #endif

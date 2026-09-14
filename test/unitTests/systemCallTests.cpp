@@ -253,6 +253,8 @@ TEST_CASE("uname", "uname"){
   REQUIRE(strcmp(buf.machine, "riscv64") == 0);
 #elif defined(__loongarch64)
   REQUIRE(strcmp(buf.machine, "loongarch64") == 0);
+#elif defined(__sh__)
+  REQUIRE(strcmp(buf.machine, "sh") == 0);
 #elif defined(__hppa__)
   REQUIRE(strcmp(buf.machine, "parisc") == 0);
 #else

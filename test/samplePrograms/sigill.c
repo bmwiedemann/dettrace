@@ -68,6 +68,10 @@ int main(int argc, char** argv) {
 #elif defined(__hppa__)
   /* .word 0 is "break 0,0" here, which would raise SIGTRAP. */
   asm(".word 0xffffffff");
+#elif defined(__sh__)
+  /* __builtin_trap() calls abort() here, so spell out an opcode that is
+     not assigned; the kernel answers it with SIGILL. */
+  asm(".word 0x0000");
 #else
   __builtin_trap();
 #endif
