@@ -172,6 +172,32 @@ const size_t syscallInsnSize = 2;
 const size_t syscallInsnSize = 4;
 #define BREAK_INSN 0x00100073UL /* ebreak */
 #define SYSCALL_INSN 0x00000073UL /* ecall */
+#elif defined(__m68k__)
+/* m68k does not select HAVE_ARCH_TRACEHOOK, so it has no regsets and
+   PTRACE_GETREGS is the only way to read the register file; it transfers
+   exactly the first 19 words of glibc's struct user_regs_struct. The
+   syscall number arrives in d0, which is also the result register, so
+   the kernel keeps it in orig_d0 across the stop and reads it back from
+   there -- that is where the number has to be read and written, while d0
+   itself holds the -ENOSYS the kernel preset. The arguments are in
+   d1..d5 and a0, none of which the result overwrites. */
+#define REG_SYSNUM(r) ((r).orig_d0)
+#define REG_RETVAL(r) ((r).d0)
+#define REG_ARG1(r) ((r).d1)
+#define REG_ARG2(r) ((r).d2)
+#define REG_ARG3(r) ((r).d3)
+#define REG_ARG4(r) ((r).d4)
+#define REG_ARG5(r) ((r).d5)
+#define REG_ARG6(r) ((r).a0)
+#define REG_IP(r) ((r).pc)
+#define REG_SP(r) ((r).usp)
+/* A trap exception stacks the address behind the instruction, which is
+   why the kernel rewinds the pc by two to restart a system call. trap #0
+   is the system call, trap #15 the vector the kernel turns into a
+   SIGTRAP for debuggers. */
+const size_t syscallInsnSize = 2;
+#define BREAK_INSN 0x4e4fUL /* trap #15 */
+#define SYSCALL_INSN 0x4e40UL /* trap #0 */
 #elif defined(__sh__)
 /* SuperH: glibc's sys/user.h has no struct user_regs_struct, ptrace
    works on the kernel's struct pt_regs, which is also what NT_PRSTATUS
@@ -317,7 +343,7 @@ const size_t syscallInsnSize = 4;
 #define PTRACE_SET_SYSCALL 23
 #endif
 #else
-#error "dettrace only supports x86_64, i386, x32, aarch64, arm, hppa, powerpc, riscv64, loongarch64, sh and s390x"
+#error "dettrace only supports x86_64, i386, x32, aarch64, arm, hppa, m68k, powerpc, riscv64, loongarch64, sh and s390x"
 #endif
 
 /* The general purpose registers named by the x86 instructions dettrace
@@ -393,7 +419,9 @@ static const SyscallStub syscallStub = {syscallStubCode, 12, 0, 4, 8};
 static const unsigned char syscallStubCode[] = {
     INSN32(BREAK_INSN), INSN32(SYSCALL_INSN), INSN32(BREAK_INSN)};
 static const SyscallStub syscallStub = {syscallStubCode, 12, 0, 4, 8};
-#elif defined(__sh__)
+#elif defined(__sh__) || defined(__m68k__)
+/* Both trap with the pc already behind the instruction, like x86 and
+   s390x do. */
 static const unsigned char syscallStubCode[] = {
     INSN16(BREAK_INSN), INSN16(SYSCALL_INSN), INSN16(BREAK_INSN)};
 static const SyscallStub syscallStub = {syscallStubCode, 6, 2, 2, 6};

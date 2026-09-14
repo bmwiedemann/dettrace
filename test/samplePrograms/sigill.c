@@ -72,6 +72,10 @@ int main(int argc, char** argv) {
   /* __builtin_trap() calls abort() here, so spell out an opcode that is
      not assigned; the kernel answers it with SIGILL. */
   asm(".word 0x0000");
+#elif defined(__m68k__)
+  /* __builtin_trap() is trap #7 here, which is a SIGILL too, but the
+     architecture has an instruction that says so. */
+  asm("illegal");
 #else
   __builtin_trap();
 #endif

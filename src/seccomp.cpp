@@ -507,7 +507,15 @@ void seccomp::loadRules(bool debug, bool convertUids) {
 #ifdef SYS_set_thread_area
   noIntercept(SYS_set_thread_area);
   noIntercept(SYS_get_thread_area);
+#endif
+#ifdef SYS_modify_ldt
   noIntercept(SYS_modify_ldt);
+#endif
+#ifdef SYS_atomic_cmpxchg_32
+  // m68k's compare-and-swap and memory barrier for the processors that
+  // have no CAS instruction: arithmetic on the tracee's own memory.
+  noIntercept(SYS_atomic_cmpxchg_32);
+  noIntercept(SYS_atomic_barrier);
 #endif
 #ifdef SYS_cacheflush
   // parisc's instruction cache maintenance, used by libgcc's

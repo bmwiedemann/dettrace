@@ -94,7 +94,13 @@ void ptracer::setRegs(struct user_regs_struct newValues) {
 }
 
 void ptracer::readRegisters(pid_t pid, struct user_regs_struct& regs) {
-#if defined(__x86_64__) || defined(__i386__)
+#if defined(__m68k__)
+  // m68k has no regsets. PTRACE_GETREGS fills the 19 words the kernel
+  // keeps, which is all of the struct but its trailing format/vector
+  // word, so clear it rather than leave that one undefined.
+  memset(&regs, 0, sizeof(regs));
+  doPtrace(PTRACE_GETREGS, pid, nullptr, &regs);
+#elif defined(__x86_64__) || defined(__i386__)
   doPtrace(PTRACE_GETREGS, pid, nullptr, &regs);
 #else
   struct iovec iov = {&regs, sizeof(regs)};
@@ -104,7 +110,7 @@ void ptracer::readRegisters(pid_t pid, struct user_regs_struct& regs) {
 }
 
 void ptracer::writeRegisters(pid_t pid, struct user_regs_struct& regs) {
-#if defined(__x86_64__) || defined(__i386__)
+#if defined(__x86_64__) || defined(__i386__) || defined(__m68k__)
   doPtrace(PTRACE_SETREGS, pid, nullptr, &regs);
 #else
   struct iovec iov = {&regs, sizeof(regs)};

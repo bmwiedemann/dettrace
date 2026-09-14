@@ -3475,6 +3475,8 @@ void unameSystemCall::handleDetPost(
     strncpy(myUts.machine, "riscv64", MEMBER_LENGTH);
 #elif defined(__loongarch64)
     strncpy(myUts.machine, "loongarch64", MEMBER_LENGTH);
+#elif defined(__m68k__)
+    strncpy(myUts.machine, "m68k", MEMBER_LENGTH);
 #elif defined(__sh__)
     // What the kernel calls itself whatever the SuperH variant and
     // endianness are, even though the port and its toolchain are sh4.

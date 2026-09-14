@@ -58,6 +58,8 @@
 #define DETTRACE_CPUINFO "/proc/cpuinfo.parisc"
 #elif defined(__sh__)
 #define DETTRACE_CPUINFO "/proc/cpuinfo.sh"
+#elif defined(__m68k__)
+#define DETTRACE_CPUINFO "/proc/cpuinfo.m68k"
 #else
 #define DETTRACE_CPUINFO nullptr
 #endif

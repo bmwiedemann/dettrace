@@ -60,8 +60,8 @@ static const unsigned long vdsoPoison = 0x0001000100010001UL; /* breakpoint */
 static const unsigned long vdsoPoison = BREAK_INSN;
 static const unsigned long vdsoPoisonThumb =
     THUMB_BREAK_INSN | (THUMB_BREAK_INSN << 16);
-#elif defined(__sh__)
-/* Two of SuperH's 16-bit breakpoints fill a word. */
+#elif defined(__sh__) || defined(__m68k__)
+/* Two 16-bit breakpoints fill a word. */
 static const unsigned long vdsoPoison = BREAK_INSN | (BREAK_INSN << 16);
 #elif __SIZEOF_LONG__ == 8
 static const unsigned long vdsoPoison = BREAK_INSN | (BREAK_INSN << 32);
