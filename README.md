@@ -37,7 +37,7 @@ reproducible container.
 The latest version of Dettrace can be found on GitHub at https://github.com/bmwiedemann/dettrace.
 
 ### Hardware dependencies
-The Dettrace prototype currently only works for x86-64, i586, x32, aarch64, armv7/armv6, powerpc, ppc64, ppc64le, s390x, loongarch64 and maybe riscv64 archs. While not strictly necessary, portability guarantees are strongest when the CPU supports intercepting certain nondeterministic CPU instructions, e.g., CPUID.
+The Dettrace prototype currently only works for x86-64, i586, x32, aarch64, armv7/armv6, hppa, powerpc, ppc64, ppc64le, s390x, loongarch64 and maybe riscv64 archs. While not strictly necessary, portability guarantees are strongest when the CPU supports intercepting certain nondeterministic CPU instructions, e.g., CPUID.
 
 sparc is not portable to and was deliberately left out. Dettrace selects
 the system calls it wants to see with a seccomp-bpf filter whose matches

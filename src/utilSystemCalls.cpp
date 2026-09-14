@@ -65,15 +65,37 @@ void replaySystemCall(globalState& gs, ptracer& t, uint64_t systemCall) {
     runtimeError("IP does not point to system call instruction!\n");
   }
 #else
-  uint32_t minus4 = t.readFromTracee(
-      traceePtr<uint32_t>((uint32_t*)((uint64_t)t.getRip().ptr - 4)),
+  // parisc stops with the pc behind the delay slot of the branch into
+  // the kernel, so the branch itself is two instructions back.
+#if defined(__hppa__)
+  const uint64_t insnBack = 8;
+#else
+  const uint64_t insnBack = 4;
+#endif
+  uint32_t minusInsn = t.readFromTracee(
+      traceePtr<uint32_t>((uint32_t*)((uint64_t)t.getRip().ptr - insnBack)),
       t.getPid());
-  if (minus4 != SYSCALL_INSN) {
+  if (minusInsn != SYSCALL_INSN) {
     runtimeError("IP does not point to system call instruction!\n");
   }
 #endif
 #endif
 
+#if defined(__hppa__)
+  // The branch into the kernel is replayed together with its delay slot,
+  // which is where the tracee's own code puts the system call number
+  // (see ptracer::rewindToSyscall), so changing the number here would be
+  // undone by the replay. Whoever needs it has to patch that instruction
+  // as well, the way the kernel's check_syscallno_in_delay_branch reads
+  // it; until then say so rather than run the wrong call.
+  if ((long)systemCall != (long)t.getSystemCallNumber()) {
+    runtimeError(
+        "replaying a system call as a different one is not implemented on "
+        "parisc: wanted " +
+        to_string((long)systemCall) + ", stopped in " +
+        to_string((long)t.getSystemCallNumber()) + "\n");
+  }
+#endif
   gs.totalReplays++;
   // Replay system call!
   t.changeSystemCall(systemCall);
@@ -82,7 +104,7 @@ void replaySystemCall(globalState& gs, ptracer& t, uint64_t systemCall) {
   // argument register, and the retry logic may also have adjusted
   // others; writeArgN keeps the cache authoritative.
   t.writeSyscallArgsToRegs();
-  t.writeIp((uint64_t)t.getRip().ptr - t.syscallInsnLength());
+  t.rewindToSyscall();
 }
 // =======================================================================================
 template <typename StatfsT>

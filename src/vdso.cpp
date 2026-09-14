@@ -268,6 +268,31 @@ static const unsigned char __vdso_getrandom[] = {
 static const unsigned char __vdso_riscv_hwprobe[] = {
     0x13, 0x05, 0xa0, 0xfd                       // li a0, -38 (-ENOSYS)
   , 0x67, 0x80, 0x00, 0x00 };                    // ret
+#elif defined(__hppa__)
+// A syscall is a branch to the gateway page whose delay slot loads the
+// number into r20; it comes back to the instruction behind the delay
+// slot, which returns to the caller.
+#define PARISC_LDI_R20(nr)                                                 \
+  (0x34140000u | ((unsigned)(nr) << 1)) /* ldi nr, %r20 */
+#define PARISC_BV_R2 0xe840c000u /* bv %r0(%r2) */
+
+#define PARISC_SYSCALL_STUB(nr)                                            \
+  {                                                                        \
+    INSN32(SYSCALL_INSN), /* ble 0x100(%sr2,%r0) */                        \
+        INSN32(PARISC_LDI_R20(nr)), /* ldi nr, %r20 (delay slot) */        \
+        INSN32(PARISC_BV_R2), /* bv %r0(%r2) */                            \
+        INSN32(PARISC_NOP_INSN) /* nop (delay slot) */                     \
+  }
+
+static const unsigned char __vdso_gettimeofday[] =
+    PARISC_SYSCALL_STUB(SYS_gettimeofday);
+
+static const unsigned char __vdso_clock_gettime[] =
+    PARISC_SYSCALL_STUB(SYS_clock_gettime);
+
+// glibc calls this one since 2.34, see the i386 stubs.
+static const unsigned char __vdso_clock_gettime64[] =
+    PARISC_SYSCALL_STUB(SYS_clock_gettime64);
 #elif defined(__loongarch64)
 // The syscall number goes into a7 from a 12-bit immediate, which fits
 // every number of the generic table.
@@ -791,6 +816,25 @@ int proc_get_vdso_symbols(
         vdso[res].func = VDSO_riscv_hwprobe;
         vdso[res].code_size = sizeof(__vdso_riscv_hwprobe);
         vdso[res].code = (const unsigned char*)__vdso_riscv_hwprobe;
+      } else {
+        continue;
+      }
+#elif defined(__hppa__)
+      // NB: the two trampolines the parisc vDSO exports besides these,
+      // __kernel_sigtramp_rt32 and __kernel_restart_syscall32, are not
+      // matched and so are left alone.
+      if (strcmp("__vdso_clock_gettime", name) == 0) {
+        vdso[res].func = VDSO_clock_gettime;
+        vdso[res].code_size = sizeof(__vdso_clock_gettime);
+        vdso[res].code = (const unsigned char*)__vdso_clock_gettime;
+      } else if (strcmp("__vdso_clock_gettime64", name) == 0) {
+        vdso[res].func = VDSO_clock_gettime64;
+        vdso[res].code_size = sizeof(__vdso_clock_gettime64);
+        vdso[res].code = (const unsigned char*)__vdso_clock_gettime64;
+      } else if (strcmp("__vdso_gettimeofday", name) == 0) {
+        vdso[res].func = VDSO_gettimeofday;
+        vdso[res].code_size = sizeof(__vdso_gettimeofday);
+        vdso[res].code = (const unsigned char*)__vdso_gettimeofday;
       } else {
         continue;
       }

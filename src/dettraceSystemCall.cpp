@@ -3453,6 +3453,11 @@ void unameSystemCall::handleDetPost(
     strncpy(myUts.machine, "riscv64", MEMBER_LENGTH);
 #elif defined(__loongarch64)
     strncpy(myUts.machine, "loongarch64", MEMBER_LENGTH);
+#elif defined(__hppa__)
+    // What a 32-bit kernel calls itself; a 64-bit one running 32-bit
+    // userspace says parisc64, which is a property of the host we do not
+    // want to show through.
+    strncpy(myUts.machine, "parisc", MEMBER_LENGTH);
 #else
     strncpy(myUts.machine, "x86_64", MEMBER_LENGTH);
 #endif
@@ -3883,17 +3888,31 @@ void listenSystemCall::handleDetPost(
 // =======================================================================================
 bool acceptSystemCall::handleDetPre(
     globalState& gs, state& s, ptracer& t, scheduler& sched) {
+#if defined(__hppa__)
+  // parisc cannot replay a system call under a different number, see
+  // ptracer::rewindToSyscall, and replaying this one under its own would
+  // hand it right back to this hook for ever. The accept4 hooks only
+  // look at the file descriptor and the flags, and accept is accept4
+  // without flags, so run it there instead of rewriting the call.
+  t.writeArg4(0);
+  return accept4SystemCall::handleDetPre(gs, s, t, sched);
+#else
   cancelSystemCall(gs, s, t);
   t.writeArg4(0);
   replaySystemCall(gs, t, SYS_accept4);
 
   gs.log.writeToLog(Importance::info, "change syscall accept => accept4\n");
   return false;
+#endif
 }
 
 void acceptSystemCall::handleDetPost(
     globalState& gs, state& s, ptracer& t, scheduler& sched) {
+#if defined(__hppa__)
+  accept4SystemCall::handleDetPost(gs, s, t, sched);
+#else
   runtimeError("should never run into SYS_accept posthook");
+#endif
 }
 // =======================================================================================
 

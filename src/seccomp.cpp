@@ -509,6 +509,11 @@ void seccomp::loadRules(bool debug, bool convertUids) {
   noIntercept(SYS_get_thread_area);
   noIntercept(SYS_modify_ldt);
 #endif
+#ifdef SYS_cacheflush
+  // parisc's instruction cache maintenance, used by libgcc's
+  // __clear_cache; no observable result of its own.
+  noIntercept(SYS_cacheflush);
+#endif
 #ifdef __ARM_NR_set_tls
   noIntercept(__ARM_NR_set_tls);
   noIntercept(__ARM_NR_get_tls);

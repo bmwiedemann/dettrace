@@ -794,7 +794,7 @@ void execution::disableVdso(pid_t pid) {
 #endif
     /* The pc was restored to the start of the injected stub by
        traceePreinitMmap; step it to the syscall instruction. */
-    REG_IP(regs) += syscallStubFor(regs).syscallOff;
+    regsSetIp(regs, regsGetIp(regs) + syscallStubFor(regs).syscallOff);
     REG_ARG1(regs) = vvarMap.procMapBase;
     REG_ARG2(regs) = vvarMap.procMapSize;
     REG_ARG3(regs) = PROT_NONE;
@@ -833,7 +833,7 @@ static unsigned long traceePreinitMmap(pid_t pid, ptracer& t) {
      syscall instruction of the injected stub (a no-op where the
      breakpoint already advances the pc onto the syscall, e.g. x86 and
      s390). */
-  REG_IP(regs) += stub.syscallOff - stub.firstTrapOff;
+  regsSetIp(regs, regsGetIp(regs) + stub.syscallOff - stub.firstTrapOff);
 #if defined(__s390x__)
   /* s390's mmap syscall is the old single-argument form taking a
      pointer to { addr, len, prot, flags, fd, offset }. There is no
@@ -876,7 +876,7 @@ static unsigned long traceePreinitMmap(pid_t pid, ptracer& t) {
   ret = regsReturnValue(regs);
   /* Rewind from behind the stub back to its start, where the original
      instruction will be restored. */
-  REG_IP(oldRegs) = REG_IP(regs) - stub.endOff;
+  regsSetIp(oldRegs, regsGetIp(regs) - stub.endOff);
   memcpy(&regs, &oldRegs, sizeof(regs));
   ptracer::writeRegisters(pid, regs);
 
@@ -887,7 +887,7 @@ void execution::handleExecEvent(pid_t pid) {
   struct user_regs_struct regs;
 
   ptracer::readRegisters(pid, regs);
-  auto rip = REG_IP(regs);
+  auto rip = regsGetIp(regs);
 #if defined(__arm__)
   /* An arm64 kernel leaves bit 0 of a Thumb entry point set in the
      compat pc (a 32-bit kernel clears it); the mode is in the cpsr. */
@@ -1094,7 +1094,7 @@ void execution::handleSignal(int sigNum, const pid_t traceesPid) {
           "== %p\n";
       auto coloredMsg = log.makeTextColored(Color::blue, msg);
       log.writeToLog(
-          Importance::inter, coloredMsg, traceesPid, REG_IP(regs),
+          Importance::inter, coloredMsg, traceesPid, regsGetIp(regs),
           REG_AX(regs), REG_CX(regs));
 
       // step over cpuid insn

@@ -1,0 +1,14 @@
+processor	: 0
+cpu family	: PA-RISC 2.0
+cpu		: PA8700 (PCX-W2)
+capabilities	: os32
+model		: 9000/785/C3000
+model name	: Allegro W2
+hversion	: 0x00005940
+sversion	: 0x00000481
+I-cache		: 768 KB
+D-cache		: 1536 KB (WB, direct mapped)
+ITLB entries	: 240
+DTLB entries	: 240 - shared with ITLB
+bogomips	: 1000.00
+software id	: 0000000000

@@ -159,6 +159,40 @@ const size_t syscallInsnSize = 2;
 const size_t syscallInsnSize = 4;
 #define BREAK_INSN 0x00100073UL /* ebreak */
 #define SYSCALL_INSN 0x00000073UL /* ecall */
+#elif defined(__hppa__)
+/* glibc has no struct user_regs_struct for parisc, the kernel uapi
+   header does, and it is exactly the NT_PRSTATUS regset: the 32 general
+   registers, the space registers and the instruction address queue. The
+   arguments are in r26 counting down to r21, the syscall number is in
+   r20 and the result in r28, which is not an argument register, so
+   nothing aliases here. Errors are a plain negative errno. */
+#include <asm/ptrace.h>
+#define REG_SYSNUM(r) ((r).gr[20])
+#define REG_RETVAL(r) ((r).gr[28])
+#define REG_ARG1(r) ((r).gr[26])
+#define REG_ARG2(r) ((r).gr[25])
+#define REG_ARG3(r) ((r).gr[24])
+#define REG_ARG4(r) ((r).gr[23])
+#define REG_ARG5(r) ((r).gr[22])
+#define REG_ARG6(r) ((r).gr[21])
+/* Only ever read or written through regsGetIp()/regsSetIp(): parisc runs
+   a two-deep instruction address queue and keeps the privilege level in
+   the low two bits of each half. */
+#define REG_IP(r) ((r).iaoq[0])
+#define REG_SP(r) ((r).gr[30])
+/* "ble 0x100(%sr2,%r0)" plus the delay slot that loads the syscall
+   number: entering the kernel is a branch to the gateway page, which
+   leaves the address behind the delay slot in r31 and is where the
+   kernel returns to. A syscall stop reports that same address as the pc,
+   and writes to the queue are discarded there (syscall_restore returns
+   with "be,n 0(%sr3,%r31)"), so winding a call back means winding r31,
+   see ptracer::rewindToSyscall. */
+const size_t syscallInsnSize = 8;
+/* gdb's breakpoint, which the kernel's handle_break() turns into a
+   SIGTRAP with the queue still on the instruction. */
+#define BREAK_INSN 0x00010004UL /* break 4,8 */
+#define SYSCALL_INSN 0xe4008200UL /* ble 0x100(%sr2,%r0) */
+#define PARISC_NOP_INSN 0x08000240UL /* or %r0,%r0,%r0 */
 #elif defined(__loongarch64)
 /* glibc's sys/user.h defines struct user_regs_struct here, the kernel's
    user_pt_regs: the 32 general registers, the saved first argument and
@@ -242,7 +276,7 @@ const size_t syscallInsnSize = 4;
 #define PTRACE_SET_SYSCALL 23
 #endif
 #else
-#error "dettrace only supports x86_64, i386, x32, aarch64, arm, powerpc, riscv64, loongarch64 and s390x"
+#error "dettrace only supports x86_64, i386, x32, aarch64, arm, hppa, powerpc, riscv64, loongarch64 and s390x"
 #endif
 
 /* The general purpose registers named by the x86 instructions dettrace
@@ -318,6 +352,14 @@ static const SyscallStub syscallStub = {syscallStubCode, 12, 0, 4, 8};
 static const unsigned char syscallStubCode[] = {
     INSN32(BREAK_INSN), INSN32(SYSCALL_INSN), INSN32(BREAK_INSN)};
 static const SyscallStub syscallStub = {syscallStubCode, 12, 0, 4, 8};
+#elif defined(__hppa__)
+/* The branch to the gateway page has a delay slot, and leaves the
+   address behind it in r31, which is where the kernel returns to: so the
+   trailing breakpoint goes two instructions after the branch. */
+static const unsigned char syscallStubCode[] = {
+    INSN32(BREAK_INSN), INSN32(SYSCALL_INSN), INSN32(PARISC_NOP_INSN),
+    INSN32(BREAK_INSN)};
+static const SyscallStub syscallStub = {syscallStubCode, 16, 0, 4, 12};
 #elif defined(__s390x__)
 /* 0x0001 is the s390 breakpoint instruction, the kernel turns the
    resulting operation exception into a SIGTRAP. */
@@ -326,8 +368,9 @@ static const unsigned char syscallStubCode[] = {0x00, 0x01, 0x0a,
 static const SyscallStub syscallStub = {syscallStubCode, 6, 2, 2, 6};
 #endif
 
-/* Room for the largest stub, 12 bytes, in words of the smallest size. */
-const size_t maxSyscallStubWords = 3;
+/* Room for the largest stub, parisc's 16 bytes, in words of the
+   smallest size. */
+const size_t maxSyscallStubWords = 4;
 
 /**
  * The stub to inject into a tracee stopped with the given registers.
@@ -339,6 +382,31 @@ static inline const SyscallStub& syscallStubFor(
 #else
   (void)r;
   return syscallStub;
+#endif
+}
+
+/**
+ * The address the tracee executes next, and its setter. Every
+ * architecture but parisc holds it in one register; parisc has a
+ * two-deep instruction address queue and carries the privilege level in
+ * the low two bits of each half, so both have to be written and the
+ * level preserved.
+ */
+static inline unsigned long regsGetIp(const struct user_regs_struct& r) {
+#if defined(__hppa__)
+  return r.iaoq[0] & ~3UL;
+#else
+  return (unsigned long)REG_IP(r);
+#endif
+}
+
+static inline void regsSetIp(struct user_regs_struct& r, unsigned long val) {
+#if defined(__hppa__)
+  const unsigned long priv = r.iaoq[0] & 3UL;
+  r.iaoq[0] = (val & ~3UL) | priv;
+  r.iaoq[1] = ((val + 4) & ~3UL) | priv;
+#else
+  REG_IP(r) = val;
 #endif
 }
 
@@ -569,6 +637,12 @@ public:
    * arm, where Thumb code has a 2 byte svc.
    */
   size_t syscallInsnLength() const;
+
+  /**
+   * Wind the tracee back so that the system call instruction it is
+   * stopped behind executes once more, see replaySystemCall.
+   */
+  void rewindToSyscall();
 
 #if defined(__x86_64__) || defined(__i386__)
   /**

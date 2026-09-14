@@ -124,7 +124,7 @@ void ptracer::writeSyscallNumber(pid_t pid, long val) {
 #endif
 
 traceePtr<void> ptracer::getRip() {
-  return traceePtr<void>((void*)REG_IP(regs));
+  return traceePtr<void>((void*)regsGetIp(regs));
 }
 traceePtr<void> ptracer::getRsp() {
   return traceePtr<void>((void*)REG_SP(regs));
@@ -159,7 +159,7 @@ long ptracer::decodeSyscallNumber() {
   // takes it from r1. The pc points right behind the 2-byte svc at every
   // syscall stop, so decode it; fall back to r1 elsewhere.
   uint16_t insn = readFromTracee(
-      traceePtr<uint16_t>((uint16_t*)(REG_IP(regs) - 2)), traceePid);
+      traceePtr<uint16_t>((uint16_t*)(regsGetIp(regs) - 2)), traceePid);
   if ((insn & 0xff00) == 0x0a00 && (insn & 0x00ff) != 0) {
     return insn & 0x00ff;
   }
@@ -351,8 +351,27 @@ void ptracer::writeArg6(uint64_t val) {
 }
 
 void ptracer::writeIp(uint64_t val) {
-  REG_IP(regs) = val;
+  regsSetIp(regs, (unsigned long)val);
   writeRegisters(traceePid, regs);
+}
+
+void ptracer::rewindToSyscall() {
+#if defined(__hppa__)
+  // parisc enters the kernel by branching to the gateway page, so the
+  // instruction queue at a syscall stop does not point into user code at
+  // all and the address to come back to is the one the branch left in
+  // r31. Winding that back over the branch and its delay slot is how the
+  // kernel restarts an interrupted system call itself, see
+  // check_syscallno_in_delay_branch() in arch/parisc/kernel/signal.c.
+  // NB: the delay slot usually loads the syscall number, so the replayed
+  // call is the one the tracee originally made -- changing the number
+  // and replaying does not work here, the same limitation s390x has with
+  // the number in the svc instruction.
+  regs.gr[31] -= syscallInsnSize;
+  writeRegisters(traceePid, regs);
+#else
+  writeIp(regsGetIp(regs) - syscallInsnLength());
+#endif
 }
 
 size_t ptracer::syscallInsnLength() const {

@@ -42,6 +42,11 @@ enum VDSOFunc {
  */
 #if defined(__x86_64__)
 #define MIN_VDSO_SYMBOLS 4
+#elif defined(__hppa__)
+/* The parisc vDSO exported nothing but the two trampolines before 6.11;
+   a kernel whose vDSO has no time functions is fine, glibc then makes
+   the system calls dettrace intercepts anyway. */
+#define MIN_VDSO_SYMBOLS 0
 #else
 #define MIN_VDSO_SYMBOLS 2
 #endif

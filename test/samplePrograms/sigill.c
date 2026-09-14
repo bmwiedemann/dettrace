@@ -65,6 +65,9 @@ int main(int argc, char** argv) {
   asm(".long 0");
 #elif defined(__riscv) || defined(__loongarch64)
   asm(".word 0");
+#elif defined(__hppa__)
+  /* .word 0 is "break 0,0" here, which would raise SIGTRAP. */
+  asm(".word 0xffffffff");
 #else
   __builtin_trap();
 #endif
