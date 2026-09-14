@@ -268,6 +268,61 @@ static const unsigned char __vdso_getrandom[] = {
 static const unsigned char __vdso_riscv_hwprobe[] = {
     0x13, 0x05, 0xa0, 0xfd                       // li a0, -38 (-ENOSYS)
   , 0x67, 0x80, 0x00, 0x00 };                    // ret
+#elif defined(__loongarch64)
+// The syscall number goes into a7 from a 12-bit immediate, which fits
+// every number of the generic table.
+#define LA_ORI_A7(nr) (0x0380000bu | ((unsigned)(nr) << 10)) /* ori a7, zero, nr */
+#define LA_SYSCALL 0x002b0000u /* syscall 0 */
+#define LA_RET 0x4c000020u /* jr ra */
+#define LA_NOP 0x03400000u /* andi zero, zero, 0 */
+#define LA_ADDIW(rd, rj, imm)                                              \
+  (0x02800000u | (((unsigned)(imm)&0xfffu) << 10) | ((unsigned)(rj) << 5) | \
+   (unsigned)(rd)) /* addi.w rd, rj, imm */
+#define LA_BEQZ(rj, insns)                                                 \
+  (0x40000000u | (((unsigned)(insns)&0xffffu) << 10) |                     \
+   ((unsigned)(rj) << 5)) /* beqz rj, insns instructions ahead */
+#define LA_STW_0(rd, rj)                                                   \
+  (0x29800000u | ((unsigned)(rj) << 5) | (unsigned)(rd)) /* st.w rd, rj, 0 */
+#define LA_MOVE(rd, rj)                                                    \
+  (0x00150000u | ((unsigned)(rj) << 5) | (unsigned)(rd)) /* or rd, rj, zero */
+#define LA_ZERO 0
+#define LA_A0 4
+#define LA_A1 5
+
+#define LA_SYSCALL_STUB(nr)                                                \
+  {                                                                        \
+    INSN32(LA_ORI_A7(nr)), /* ori a7, zero, nr */                          \
+        INSN32(LA_SYSCALL), /* syscall 0 */                                \
+        INSN32(LA_RET), /* jr ra */                                        \
+        INSN32(LA_NOP) /* nop */                                           \
+  }
+
+static const unsigned char __vdso_clock_gettime[] =
+    LA_SYSCALL_STUB(SYS_clock_gettime);
+
+static const unsigned char __vdso_gettimeofday[] =
+    LA_SYSCALL_STUB(SYS_gettimeofday);
+
+// See the x86_64 __vdso_clock_getres above.
+static const unsigned char __vdso_clock_getres[] =
+    LA_SYSCALL_STUB(SYS_clock_getres);
+
+// returns cpu 0, node 0, like the x86_64 __vdso_getcpu
+static const unsigned char __vdso_getcpu[] = {
+    INSN32(LA_BEQZ(LA_A0, 2)), // beqz a0, . + 8
+    INSN32(LA_STW_0(LA_ZERO, LA_A0)), // st.w zero, a0, 0
+    INSN32(LA_BEQZ(LA_A1, 2)), // beqz a1, . + 8
+    INSN32(LA_STW_0(LA_ZERO, LA_A1)), // st.w zero, a1, 0
+    INSN32(LA_MOVE(LA_A0, LA_ZERO)), // move a0, zero
+    INSN32(LA_RET)}; // jr ra
+
+// See the x86_64 __vdso_getrandom above: force the fallback to the
+// intercepted getrandom syscall.
+static const unsigned char __vdso_getrandom[] = {
+    INSN32(LA_ADDIW(LA_A0, LA_ZERO, -ENOSYS)), // li.w a0, -38
+    INSN32(LA_RET), // jr ra
+    INSN32(LA_NOP), // nop
+    INSN32(LA_NOP)}; // nop
 #elif defined(__powerpc__)
 // NB: the powerpc vDSO functions report errors through the cr0
 // summary-overflow bit like system calls do, which the sc instruction
@@ -736,6 +791,30 @@ int proc_get_vdso_symbols(
         vdso[res].func = VDSO_riscv_hwprobe;
         vdso[res].code_size = sizeof(__vdso_riscv_hwprobe);
         vdso[res].code = (const unsigned char*)__vdso_riscv_hwprobe;
+      } else {
+        continue;
+      }
+#elif defined(__loongarch64)
+      if (strcmp("__vdso_clock_gettime", name) == 0) {
+        vdso[res].func = VDSO_clock_gettime;
+        vdso[res].code_size = sizeof(__vdso_clock_gettime);
+        vdso[res].code = (const unsigned char*)__vdso_clock_gettime;
+      } else if (strcmp("__vdso_gettimeofday", name) == 0) {
+        vdso[res].func = VDSO_gettimeofday;
+        vdso[res].code_size = sizeof(__vdso_gettimeofday);
+        vdso[res].code = (const unsigned char*)__vdso_gettimeofday;
+      } else if (strcmp("__vdso_clock_getres", name) == 0) {
+        vdso[res].func = VDSO_clock_getres;
+        vdso[res].code_size = sizeof(__vdso_clock_getres);
+        vdso[res].code = (const unsigned char*)__vdso_clock_getres;
+      } else if (strcmp("__vdso_getcpu", name) == 0) {
+        vdso[res].func = VDSO_getcpu;
+        vdso[res].code_size = sizeof(__vdso_getcpu);
+        vdso[res].code = (const unsigned char*)__vdso_getcpu;
+      } else if (strcmp("__vdso_getrandom", name) == 0) {
+        vdso[res].func = VDSO_getrandom;
+        vdso[res].code_size = sizeof(__vdso_getrandom);
+        vdso[res].code = (const unsigned char*)__vdso_getrandom;
       } else {
         continue;
       }

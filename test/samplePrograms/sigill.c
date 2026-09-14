@@ -63,7 +63,7 @@ int main(int argc, char** argv) {
   asm(".inst 0x00000000"); /* udf #0 */
 #elif defined(__powerpc__) || defined(__s390x__)
   asm(".long 0");
-#elif defined(__riscv)
+#elif defined(__riscv) || defined(__loongarch64)
   asm(".word 0");
 #else
   __builtin_trap();

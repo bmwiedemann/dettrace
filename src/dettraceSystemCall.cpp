@@ -3451,6 +3451,8 @@ void unameSystemCall::handleDetPost(
     strncpy(myUts.machine, "s390x", MEMBER_LENGTH);
 #elif defined(__riscv)
     strncpy(myUts.machine, "riscv64", MEMBER_LENGTH);
+#elif defined(__loongarch64)
+    strncpy(myUts.machine, "loongarch64", MEMBER_LENGTH);
 #else
     strncpy(myUts.machine, "x86_64", MEMBER_LENGTH);
 #endif

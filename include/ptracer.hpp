@@ -159,6 +159,32 @@ const size_t syscallInsnSize = 2;
 const size_t syscallInsnSize = 4;
 #define BREAK_INSN 0x00100073UL /* ebreak */
 #define SYSCALL_INSN 0x00000073UL /* ecall */
+#elif defined(__loongarch64)
+/* glibc's sys/user.h defines struct user_regs_struct here, the kernel's
+   user_pt_regs: the 32 general registers, the saved first argument and
+   the two control registers ptrace exposes. a0..a5 (r4..r9) are the
+   arguments, a7 (r11) the syscall number, a0 the return value. */
+#define REG_SYSNUM(r) ((r).regs[11])
+#define REG_RETVAL(r) ((r).regs[4])
+#define REG_ARG1(r) ((r).regs[4])
+#define REG_ARG2(r) ((r).regs[5])
+#define REG_ARG3(r) ((r).regs[6])
+#define REG_ARG4(r) ((r).regs[7])
+#define REG_ARG5(r) ((r).regs[8])
+#define REG_ARG6(r) ((r).regs[9])
+#define REG_IP(r) ((r).csr_era)
+#define REG_SP(r) ((r).regs[3])
+/* do_syscall() presets a0, which is also the return register, to -ENOSYS
+   before the trace stop and keeps the first argument in orig_a0, exactly
+   like powerpc does. It also advances the pc past the syscall
+   instruction there, so rewinding by one instruction replays the call. */
+#define REG_ORIG_ARG1(r) ((r).orig_a0)
+const size_t syscallInsnSize = 4;
+/* break 4 is BRK_USERBP, what debuggers use: do_bp() leaves the pc on
+   the instruction and raises SIGTRAP for every code it does not claim
+   for kprobes, kgdb or BUG(). */
+#define BREAK_INSN 0x002a0004UL /* break 4 */
+#define SYSCALL_INSN 0x002b0000UL /* syscall 0 */
 #elif defined(__i386__)
 /* 32-bit x86: the arguments are in ebx, ecx, edx, esi, edi, ebp, the
    number in eax (orig_eax at a stop), the result in eax; "int $0x80",
@@ -216,7 +242,7 @@ const size_t syscallInsnSize = 4;
 #define PTRACE_SET_SYSCALL 23
 #endif
 #else
-#error "dettrace only supports x86_64, i386, aarch64, arm, powerpc64le, riscv64 and s390x"
+#error "dettrace only supports x86_64, i386, x32, aarch64, arm, powerpc, riscv64, loongarch64 and s390x"
 #endif
 
 /* The general purpose registers named by the x86 instructions dettrace
@@ -287,6 +313,10 @@ static const SyscallStub syscallStub = {syscallStubCode, 12, 0, 4, 8};
 static const unsigned char syscallStubCode[] = {0x73, 0x00, 0x10, 0x00,
                                                 0x73, 0x00, 0x00, 0x00,
                                                 0x73, 0x00, 0x10, 0x00};
+static const SyscallStub syscallStub = {syscallStubCode, 12, 0, 4, 8};
+#elif defined(__loongarch64)
+static const unsigned char syscallStubCode[] = {
+    INSN32(BREAK_INSN), INSN32(SYSCALL_INSN), INSN32(BREAK_INSN)};
 static const SyscallStub syscallStub = {syscallStubCode, 12, 0, 4, 8};
 #elif defined(__s390x__)
 /* 0x0001 is the s390 breakpoint instruction, the kernel turns the

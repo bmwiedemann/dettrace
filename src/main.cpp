@@ -52,6 +52,8 @@
 #define DETTRACE_CPUINFO "/proc/cpuinfo.s390x"
 #elif defined(__riscv)
 #define DETTRACE_CPUINFO "/proc/cpuinfo.riscv64"
+#elif defined(__loongarch64)
+#define DETTRACE_CPUINFO "/proc/cpuinfo.loongarch64"
 #else
 #define DETTRACE_CPUINFO nullptr
 #endif

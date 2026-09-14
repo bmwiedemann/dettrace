@@ -141,6 +141,11 @@ static inline bool isSentinelSyscall(long num) {
 #ifndef SYS_mmap
 #define SYS_mmap SYSCALL_SENTINEL(38)
 #endif
+/* The generic table has prlimit64 only; loongarch64 does not ask for the
+   two old calls (__ARCH_WANT_SET_GET_RLIMIT). */
+#ifndef SYS_setrlimit
+#define SYS_setrlimit SYSCALL_SENTINEL(39)
+#endif
 
 /*
  * The architectures whose table calls the at-variant of stat fstatat64
