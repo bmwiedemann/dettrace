@@ -269,7 +269,13 @@ long ptracer::doPtrace(
 }
 
 void ptracer::changeSystemCall(uint64_t val) {
-#if defined(__x86_64__) || defined(__i386__)
+#if defined(__x86_64__) || defined(__i386__) || defined(__m68k__)
+  // Two registers to write: the kernel reads the number of the call to
+  // execute from the one it saved at entry (orig_rax, orig_d0), while a
+  // trap executed afresh -- which is what a replay does -- takes it from
+  // the plain register the tracee loaded (rax, d0). On m68k the kernel
+  // overwrites orig_d0 from d0 on the way in, and restarts an
+  // interrupted call by copying orig_d0 back into d0 before rewinding.
   REG_SYSNUM(regs) = val;
   REG_RETVAL(regs) = val;
 #elif defined(__s390x__)

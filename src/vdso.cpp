@@ -927,6 +927,13 @@ int proc_get_vdso_symbols(
       } else {
         continue;
       }
+#else
+      /* Nothing to replace here: SuperH's vDSO holds only the system call
+         helper and the two signal trampolines, and m68k has none at all.
+         Without this arm the name would go unexamined and every symbol be
+         recorded with no code to write over it. */
+      (void)name;
+      continue;
 #endif
 #if !defined(__arm__)
       vdso[res].poison = vdsoPoison;

@@ -789,7 +789,9 @@ void execution::disableVdso(pid_t pid) {
     auto oldRegs = regs;
 
     REG_SYSNUM(regs) = SYS_mprotect;
-#if defined(__x86_64__) || defined(__i386__)
+#if defined(__x86_64__) || defined(__i386__) || defined(__m68k__)
+    // The stub's trap runs from scratch, so the number has to be in the
+    // register the tracee itself would have loaded, see changeSystemCall.
     REG_RETVAL(regs) = SYS_mprotect;
 #endif
     /* The pc was restored to the start of the injected stub by
@@ -825,7 +827,7 @@ static unsigned long traceePreinitMmap(pid_t pid, ptracer& t) {
   auto oldRegs = regs;
 
   REG_SYSNUM(regs) = DETTRACE_SYS_MMAP;
-#if defined(__x86_64__) || defined(__i386__)
+#if defined(__x86_64__) || defined(__i386__) || defined(__m68k__)
   REG_RETVAL(regs) = REG_SYSNUM(regs);
 #endif
   const SyscallStub& stub = syscallStubFor(regs);

@@ -52,11 +52,14 @@ alpha was left out for one reason only: libseccomp has no alpha
 architecture, so `seccomp_init()`, `seccomp_arch_native()` and the syscall
 name table dettrace uses are missing and it cannot be linked there. The
 kernel side would be fine -- unlike sparc, alpha does select
-`HAVE_ARCH_SECCOMP_FILTER` -- so this is a matter of teaching libseccomp
-about the architecture first. Whoever does should know that alpha reports
+`HAVE_ARCH_SECCOMP_FILTER`, though only since Linux 7.1 -- so this is a
+matter of teaching libseccomp about the architecture first. Whoever does should know that alpha reports
 system call errors through a flag register the way powerpc does, a3 set to
 1 with a positive errno in v0, which `regsReturnValue()` already has a
 shape for, and that it has no vDSO to patch.
+
+m68k needs Linux 6.3 or newer, which is where it gained seccomp-bpf
+filters; on an older kernel dettrace stops at `seccomp_load()`.
 
 sparc is not portable to and was deliberately left out. Dettrace selects
 the system calls it wants to see with a seccomp-bpf filter whose matches

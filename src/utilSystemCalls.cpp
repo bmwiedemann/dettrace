@@ -64,6 +64,14 @@ void replaySystemCall(globalState& gs, ptracer& t, uint64_t systemCall) {
   if ((minus2 & 0xff00) != 0x0a00 /* svc */) {
     runtimeError("IP does not point to system call instruction!\n");
   }
+#elif defined(__sh__) || defined(__m68k__)
+  /* Both enter the kernel with a 16-bit instruction. */
+  uint16_t minus2 = t.readFromTracee(
+      traceePtr<uint16_t>((uint16_t*)((uint64_t)t.getRip().ptr - 2)),
+      t.getPid());
+  if (minus2 != (uint16_t)SYSCALL_INSN) {
+    runtimeError("IP does not point to system call instruction!\n");
+  }
 #else
   // parisc stops with the pc behind the delay slot of the branch into
   // the kernel, so the branch itself is two instructions back.
