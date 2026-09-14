@@ -802,13 +802,7 @@ static unsigned long traceePreinitMmap(pid_t pid, ptracer& t) {
   ptracer::readRegisters(pid, regs);
   auto oldRegs = regs;
 
-#if defined(__i386__) || defined(__arm__)
-  /* The 32-bit tables only have (i386: only usefully have) mmap2, whose
-     offset is in pages; ours is 0 anyway. */
-  REG_SYSNUM(regs) = SYS_mmap2;
-#else
-  REG_SYSNUM(regs) = SYS_mmap;
-#endif
+  REG_SYSNUM(regs) = DETTRACE_SYS_MMAP;
 #if defined(__x86_64__) || defined(__i386__)
   REG_RETVAL(regs) = REG_SYSNUM(regs);
 #endif

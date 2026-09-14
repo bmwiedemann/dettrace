@@ -243,6 +243,8 @@ TEST_CASE("uname", "uname"){
   REQUIRE(strcmp(buf.machine, "i686") == 0);
 #elif defined(__powerpc64__)
   REQUIRE(strcmp(buf.machine, "ppc64le") == 0);
+#elif defined(__powerpc__)
+  REQUIRE(strcmp(buf.machine, "ppc") == 0);
 #elif defined(__s390x__)
   REQUIRE(strcmp(buf.machine, "s390x") == 0);
 #elif defined(__riscv)

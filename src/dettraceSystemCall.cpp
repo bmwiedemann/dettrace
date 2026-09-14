@@ -3443,6 +3443,8 @@ void unameSystemCall::handleDetPost(
     strncpy(myUts.machine, "i686", MEMBER_LENGTH);
 #elif defined(__powerpc64__)
     strncpy(myUts.machine, "ppc64le", MEMBER_LENGTH);
+#elif defined(__powerpc__)
+    strncpy(myUts.machine, "ppc", MEMBER_LENGTH);
 #elif defined(__s390x__)
     strncpy(myUts.machine, "s390x", MEMBER_LENGTH);
 #elif defined(__riscv)

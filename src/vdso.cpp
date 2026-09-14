@@ -60,8 +60,11 @@ static const unsigned long vdsoPoison = 0x0001000100010001UL; /* breakpoint */
 static const unsigned long vdsoPoison = BREAK_INSN;
 static const unsigned long vdsoPoisonThumb =
     THUMB_BREAK_INSN | (THUMB_BREAK_INSN << 16);
-#else
+#elif __SIZEOF_LONG__ == 8
 static const unsigned long vdsoPoison = BREAK_INSN | (BREAK_INSN << 32);
+#else
+/* One 32-bit instruction is a whole word here. */
+static const unsigned long vdsoPoison = BREAK_INSN;
 #endif
 
 /*
@@ -271,56 +274,80 @@ static const unsigned char __vdso_getrandom[] = {
 static const unsigned char __vdso_riscv_hwprobe[] = {
     0x13, 0x05, 0xa0, 0xfd                       // li a0, -38 (-ENOSYS)
   , 0x67, 0x80, 0x00, 0x00 };                    // ret
-#elif defined(__powerpc64__)
+#elif defined(__powerpc__)
 // NB: the powerpc vDSO functions report errors through the cr0
 // summary-overflow bit like system calls do, which the sc instruction
-// sets up for us in the syscall-based stubs.
-static const unsigned char __kernel_time[] = {
-    0x0d, 0x00, 0x00, 0x38                       // li r0, 13 (SYS_time)
-  , 0x02, 0x00, 0x00, 0x44                       // sc
-  , 0x20, 0x00, 0x80, 0x4e                       // blr
-  , 0x00, 0x00, 0x00, 0x60 };                    // nop
+// sets up for us in the syscall-based stubs. The same instructions serve
+// the 32-bit and the 64-bit vDSO, INSN32 puts their bytes in the
+// target's order.
+#define PPC_LI(r, v)                                                       \
+  (0x38000000u | ((unsigned)(r) << 21) | ((unsigned)(v)&0xffffu)) /* li */
+#define PPC_SC 0x44000002u /* sc */
+#define PPC_BLR 0x4e800020u /* blr */
+#define PPC_NOP 0x60000000u /* nop */
+#define PPC_BEQ_8 0x41820008u /* beq . + 8 */
+#define PPC_STW_0(r, b)                                                    \
+  (0x90000000u | ((unsigned)(r) << 21) | ((unsigned)(b) << 16)) /* stw */
+#define PPC_CRCLR_SO 0x4c631982u /* crclr so: success */
+#define PPC_CRSET_SO 0x4c631a42u /* crset so: error */
+#if defined(__powerpc64__)
+#define PPC_CMPI_0(r) (0x2c200000u | ((unsigned)(r) << 16)) /* cmpdi r, 0 */
+#else
+/* cmpdi is a 64-bit instruction; on ppc32 a pointer is a word anyway. */
+#define PPC_CMPI_0(r) (0x2c000000u | ((unsigned)(r) << 16)) /* cmpwi r, 0 */
+#endif
 
-static const unsigned char __kernel_clock_gettime[] = {
-    0xf6, 0x00, 0x00, 0x38                       // li r0, 246 (SYS_clock_gettime)
-  , 0x02, 0x00, 0x00, 0x44                       // sc
-  , 0x20, 0x00, 0x80, 0x4e                       // blr
-  , 0x00, 0x00, 0x00, 0x60 };                    // nop
+#define PPC_SYSCALL_STUB(nr)                                               \
+  {                                                                        \
+    INSN32(PPC_LI(0, nr)), /* li r0, nr */                                 \
+        INSN32(PPC_SC), /* sc */                                           \
+        INSN32(PPC_BLR), /* blr */                                         \
+        INSN32(PPC_NOP) /* nop */                                          \
+  }
 
-static const unsigned char __kernel_gettimeofday[] = {
-    0x4e, 0x00, 0x00, 0x38                       // li r0, 78 (SYS_gettimeofday)
-  , 0x02, 0x00, 0x00, 0x44                       // sc
-  , 0x20, 0x00, 0x80, 0x4e                       // blr
-  , 0x00, 0x00, 0x00, 0x60 };                    // nop
+static const unsigned char __kernel_time[] = PPC_SYSCALL_STUB(SYS_time);
+
+static const unsigned char __kernel_clock_gettime[] =
+    PPC_SYSCALL_STUB(SYS_clock_gettime);
+
+static const unsigned char __kernel_gettimeofday[] =
+    PPC_SYSCALL_STUB(SYS_gettimeofday);
 
 // See the x86_64 __vdso_clock_getres above.
-static const unsigned char __kernel_clock_getres[] = {
-    0xf7, 0x00, 0x00, 0x38                       // li r0, 247 (SYS_clock_getres)
-  , 0x02, 0x00, 0x00, 0x44                       // sc
-  , 0x20, 0x00, 0x80, 0x4e                       // blr
-  , 0x00, 0x00, 0x00, 0x60 };                    // nop
+static const unsigned char __kernel_clock_getres[] =
+    PPC_SYSCALL_STUB(SYS_clock_getres);
+
+#ifdef SYS_clock_gettime64
+// The 32-bit vDSO also has the entries taking a 64-bit time_t, which is
+// what glibc calls since 2.34.
+static const unsigned char __kernel_clock_gettime64[] =
+    PPC_SYSCALL_STUB(SYS_clock_gettime64);
+
+static const unsigned char __kernel_clock_getres_time64[] =
+    PPC_SYSCALL_STUB(SYS_clock_getres_time64);
+#endif
 
 // returns cpu 0, node 0, like the x86_64 __vdso_getcpu
 static const unsigned char __kernel_getcpu[] = {
-    0x00, 0x00, 0x20, 0x39                       // li r9, 0
-  , 0x00, 0x00, 0x23, 0x2c                       // cmpdi r3, 0
-  , 0x08, 0x00, 0x82, 0x41                       // beq . + 8
-  , 0x00, 0x00, 0x23, 0x91                       // stw r9, 0(r3)
-  , 0x00, 0x00, 0x24, 0x2c                       // cmpdi r4, 0
-  , 0x08, 0x00, 0x82, 0x41                       // beq . + 8
-  , 0x00, 0x00, 0x24, 0x91                       // stw r9, 0(r4)
-  , 0x00, 0x00, 0x60, 0x38                       // li r3, 0
-  , 0x82, 0x19, 0x63, 0x4c                       // crclr so (success)
-  , 0x20, 0x00, 0x80, 0x4e };                    // blr
+    INSN32(PPC_LI(9, 0)), // li r9, 0
+    INSN32(PPC_CMPI_0(3)), // cmp r3, 0
+    INSN32(PPC_BEQ_8), // beq . + 8
+    INSN32(PPC_STW_0(9, 3)), // stw r9, 0(r3)
+    INSN32(PPC_CMPI_0(4)), // cmp r4, 0
+    INSN32(PPC_BEQ_8), // beq . + 8
+    INSN32(PPC_STW_0(9, 4)), // stw r9, 0(r4)
+    INSN32(PPC_LI(3, 0)), // li r3, 0
+    INSN32(PPC_CRCLR_SO), // crclr so (success)
+    INSN32(PPC_BLR)}; // blr
 
 // See the x86_64 __vdso_getrandom above: force the fallback to the
 // intercepted getrandom syscall. Error convention: positive errno with
 // the cr0 summary-overflow bit set.
 static const unsigned char __kernel_getrandom[] = {
-    0x26, 0x00, 0x60, 0x38                       // li r3, 38 (ENOSYS)
-  , 0x42, 0x1a, 0x63, 0x4c                       // crset so (error)
-  , 0x20, 0x00, 0x80, 0x4e                       // blr
-  , 0x00, 0x00, 0x00, 0x60 };                    // nop
+    INSN32(PPC_LI(3, ENOSYS)), // li r3, 38 (ENOSYS)
+    INSN32(PPC_CRSET_SO), // crset so (error)
+    INSN32(PPC_BLR), // blr
+    INSN32(PPC_NOP)}; // nop
 #elif defined(__s390x__)
 static const unsigned char __kernel_clock_gettime[] = {
     0xa7, 0x19, 0x01, 0x04                       // lghi %r1, 260 (SYS_clock_gettime)
@@ -718,7 +745,7 @@ int proc_get_vdso_symbols(
       } else {
         continue;
       }
-#elif defined(__powerpc64__)
+#elif defined(__powerpc__)
       if (strcmp("__kernel_time", name) == 0) {
         vdso[res].func = VDSO_time;
         vdso[res].code_size = sizeof(__kernel_time);
@@ -743,6 +770,16 @@ int proc_get_vdso_symbols(
         vdso[res].func = VDSO_getrandom;
         vdso[res].code_size = sizeof(__kernel_getrandom);
         vdso[res].code = (const unsigned char*)__kernel_getrandom;
+#ifdef SYS_clock_gettime64
+      } else if (strcmp("__kernel_clock_gettime64", name) == 0) {
+        vdso[res].func = VDSO_clock_gettime64;
+        vdso[res].code_size = sizeof(__kernel_clock_gettime64);
+        vdso[res].code = (const unsigned char*)__kernel_clock_gettime64;
+      } else if (strcmp("__kernel_clock_getres_time64", name) == 0) {
+        vdso[res].func = VDSO_clock_getres_time64;
+        vdso[res].code_size = sizeof(__kernel_clock_getres_time64);
+        vdso[res].code = (const unsigned char*)__kernel_clock_getres_time64;
+#endif
       } else {
         continue;
       }

@@ -1,0 +1,9 @@
+processor	: 0
+cpu		: 7447A, altivec supported
+clock		: 1000.000000MHz
+revision	: 0.1 (pvr 8003 0101)
+
+timebase	: 25000000
+platform	: PowerMac
+model		: PowerMac3,6
+machine		: PowerMac3,6

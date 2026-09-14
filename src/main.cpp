@@ -44,6 +44,8 @@
 #define DETTRACE_CPUINFO "/proc/cpuinfo.armv6l"
 #elif defined(__powerpc64__)
 #define DETTRACE_CPUINFO "/proc/cpuinfo.ppc64le"
+#elif defined(__powerpc__)
+#define DETTRACE_CPUINFO "/proc/cpuinfo.ppc"
 #elif defined(__s390x__)
 #define DETTRACE_CPUINFO "/proc/cpuinfo.s390x"
 #elif defined(__riscv)

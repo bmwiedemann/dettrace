@@ -143,16 +143,27 @@ static inline bool isSentinelSyscall(long num) {
 #endif
 
 /*
- * 32-bit architectures (i386, arm). glibc does every stat through statx
- * there since 2.33; the legacy stat/fstat/lstat numbers fill an obsolete
- * kernel struct nobody uses anymore, while the *64 variants fill the
- * kernel's struct stat64, which is also glibc's struct stat64 (and its
- * struct stat under _FILE_OFFSET_BITS=64). The handlers work on struct
- * stat64 (identical to struct stat on 64-bit), so let the stat family
- * mean the *64 numbers; the legacy numbers get no seccomp rule and any
- * use of them errors out loudly instead of being misparsed.
+ * The architectures whose table calls the at-variant of stat fstatat64
+ * rather than newfstatat: every 32-bit one, and sparc64, where the name
+ * is historical and the number reaches sys_newfstatat all the same.
  */
-#ifdef SYS_stat64
+#if defined(SYS_fstatat64) && !defined(SYS_newfstatat)
+#define SYS_newfstatat SYS_fstatat64
+#endif
+
+/*
+ * 32-bit architectures (i386, arm, powerpc, hppa). glibc does every stat
+ * through statx there since 2.33; the legacy stat/fstat/lstat numbers
+ * fill an obsolete kernel struct nobody uses anymore, while the *64
+ * variants fill the kernel's struct stat64, which is also glibc's struct
+ * stat64 (and its struct stat under _FILE_OFFSET_BITS=64). The handlers
+ * work on struct stat64 (identical to struct stat on 64-bit), so let the
+ * stat family mean the *64 numbers; the legacy numbers get no seccomp
+ * rule and any use of them errors out loudly instead of being misparsed.
+ * Keyed on the word size, since sparc64 has the *64 numbers as well but
+ * they are its ordinary 64-bit stat calls.
+ */
+#if defined(SYS_stat64) && __SIZEOF_LONG__ == 4
 #define DETTRACE_32BIT_SYSCALL_ABI 1
 #undef SYS_stat
 #define SYS_stat SYS_stat64
@@ -160,7 +171,20 @@ static inline bool isSentinelSyscall(long num) {
 #define SYS_lstat SYS_lstat64
 #undef SYS_fstat
 #define SYS_fstat SYS_fstat64
-#define SYS_newfstatat SYS_fstatat64
+#endif
+
+/*
+ * The mmap to inject for the tracee's scratch page (see
+ * traceePreinitMmap). Where both exist, mmap2 is the one that takes its
+ * arguments in registers: i386's mmap is the ancient form taking a
+ * pointer to a struct, which is also what s390x has and handles
+ * separately. The offset is 0 either way, so pages vs bytes makes no
+ * difference.
+ */
+#ifdef SYS_mmap2
+#define DETTRACE_SYS_MMAP SYS_mmap2
+#else
+#define DETTRACE_SYS_MMAP SYS_mmap
 #endif
 
 #endif

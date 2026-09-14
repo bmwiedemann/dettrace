@@ -34,6 +34,26 @@ const size_t wordSize = sizeof(long); /**< Size of a ptrace word: 8 bytes on
                                          64-bit, 4 on i386 and arm. */
 
 /**
+ * The bytes of one 32-bit instruction, in the order the processor reads
+ * them: the machine code dettrace writes into a tracee (the post-execve
+ * stub, the vDSO replacements) is byte data, so on a big-endian target
+ * the most significant byte of the instruction word comes first.
+ */
+#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+#define INSN32(w)                                                          \
+  (unsigned char)(((unsigned long)(w) >> 24) & 0xff),                      \
+      (unsigned char)(((unsigned long)(w) >> 16) & 0xff),                  \
+      (unsigned char)(((unsigned long)(w) >> 8) & 0xff),                   \
+      (unsigned char)((unsigned long)(w)&0xff)
+#else
+#define INSN32(w)                                                          \
+  (unsigned char)((unsigned long)(w)&0xff),                                \
+      (unsigned char)(((unsigned long)(w) >> 8) & 0xff),                   \
+      (unsigned char)(((unsigned long)(w) >> 16) & 0xff),                  \
+      (unsigned char)(((unsigned long)(w) >> 24) & 0xff)
+#endif
+
+/**
  * Architecture-independent accessors for the fields of
  * struct user_regs_struct, plus the size of the syscall instruction
  * ("syscall" on x86_64, "svc #0" on aarch64).
@@ -70,9 +90,11 @@ const size_t syscallInsnSize = 4;
    breakpoint traps with the pc still pointing at itself. */
 #define BREAK_INSN 0xd4200000UL /* brk #0 */
 #define SYSCALL_INSN 0xd4000001UL /* svc #0 */
-#elif defined(__powerpc64__)
-/* powerpc has no struct user_regs_struct, ptrace uses struct pt_regs
-   (pulled in via sys/user.h). */
+#elif defined(__powerpc__)
+/* Both the 32-bit and the 64-bit powerpc ABIs, big and little endian:
+   they share one syscall table and one register layout, the 32-bit one
+   simply has 32-bit registers. powerpc has no struct user_regs_struct,
+   ptrace uses struct pt_regs (pulled in via sys/user.h). */
 #define user_regs_struct pt_regs
 #define REG_SYSNUM(r) ((r).gpr[0])
 #define REG_RETVAL(r) ((r).gpr[3])
@@ -257,10 +279,9 @@ static const unsigned char thumbSyscallStubCode[] = {0x01, 0xde, 0x00,
                                                      0xdf, 0x01, 0xde};
 static const SyscallStub thumbSyscallStub = {thumbSyscallStubCode, 6, 0, 2,
                                              4};
-#elif defined(__powerpc64__)
-static const unsigned char syscallStubCode[] = {0x08, 0x00, 0xe0, 0x7f,
-                                                0x02, 0x00, 0x00, 0x44,
-                                                0x08, 0x00, 0xe0, 0x7f};
+#elif defined(__powerpc__)
+static const unsigned char syscallStubCode[] = {
+    INSN32(BREAK_INSN), INSN32(SYSCALL_INSN), INSN32(BREAK_INSN)};
 static const SyscallStub syscallStub = {syscallStubCode, 12, 0, 4, 8};
 #elif defined(__riscv) && __riscv_xlen == 64
 static const unsigned char syscallStubCode[] = {0x73, 0x00, 0x10, 0x00,
@@ -298,7 +319,7 @@ static inline const SyscallStub& syscallStubFor(
  * the cr0 summary-overflow bit plus a positive errno instead.
  */
 static inline long regsReturnValue(const struct user_regs_struct& r) {
-#if defined(__powerpc64__)
+#if defined(__powerpc__)
   return (r.ccr & PPC_CR0_SO) ? -(long)r.gpr[3] : (long)r.gpr[3];
 #else
   return (long)REG_RETVAL(r);
@@ -315,7 +336,7 @@ static inline bool syscallFailed(long ret) {
 }
 
 static inline void regsSetReturnValue(struct user_regs_struct& r, long val) {
-#if defined(__powerpc64__)
+#if defined(__powerpc__)
   if (val < 0) {
     r.gpr[3] = -val;
     r.ccr |= PPC_CR0_SO;

@@ -61,7 +61,7 @@ int main(int argc, char** argv) {
   asm("ud2;");
 #elif defined(__aarch64__)
   asm(".inst 0x00000000"); /* udf #0 */
-#elif defined(__powerpc64__) || defined(__s390x__)
+#elif defined(__powerpc__) || defined(__s390x__)
   asm(".long 0");
 #elif defined(__riscv)
   asm(".word 0");
