@@ -241,8 +241,10 @@ TEST_CASE("uname", "uname"){
   REQUIRE(strcmp(buf.machine, "armv6l") == 0);
 #elif defined(__i386__)
   REQUIRE(strcmp(buf.machine, "i686") == 0);
-#elif defined(__powerpc64__)
+#elif defined(__powerpc64__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
   REQUIRE(strcmp(buf.machine, "ppc64le") == 0);
+#elif defined(__powerpc64__)
+  REQUIRE(strcmp(buf.machine, "ppc64") == 0);
 #elif defined(__powerpc__)
   REQUIRE(strcmp(buf.machine, "ppc") == 0);
 #elif defined(__s390x__)

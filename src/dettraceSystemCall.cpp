@@ -3441,8 +3441,10 @@ void unameSystemCall::handleDetPost(
 #elif defined(__i386__)
     // What every i586 build sees (the linux32 personality on any x86).
     strncpy(myUts.machine, "i686", MEMBER_LENGTH);
-#elif defined(__powerpc64__)
+#elif defined(__powerpc64__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
     strncpy(myUts.machine, "ppc64le", MEMBER_LENGTH);
+#elif defined(__powerpc64__)
+    strncpy(myUts.machine, "ppc64", MEMBER_LENGTH);
 #elif defined(__powerpc__)
     strncpy(myUts.machine, "ppc", MEMBER_LENGTH);
 #elif defined(__s390x__)

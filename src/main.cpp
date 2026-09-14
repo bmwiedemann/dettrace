@@ -43,7 +43,9 @@
 #elif defined(__arm__)
 #define DETTRACE_CPUINFO "/proc/cpuinfo.armv6l"
 #elif defined(__powerpc64__)
-#define DETTRACE_CPUINFO "/proc/cpuinfo.ppc64le"
+// /proc/cpuinfo says nothing about endianness, so one file serves both
+// the big-endian and the little-endian 64-bit powerpc.
+#define DETTRACE_CPUINFO "/proc/cpuinfo.ppc64"
 #elif defined(__powerpc__)
 #define DETTRACE_CPUINFO "/proc/cpuinfo.ppc"
 #elif defined(__s390x__)

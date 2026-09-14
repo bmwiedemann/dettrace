@@ -37,7 +37,7 @@ reproducible container.
 The latest version of Dettrace can be found on GitHub at https://github.com/bmwiedemann/dettrace.
 
 ### Hardware dependencies
-The Dettrace prototype currently only works for x86-64, i586, aarch64, armv7/armv6, powerpc, ppc64le, s390x and maybe riscv64 archs. While not strictly necessary, portability guarantees are strongest when the CPU supports intercepting certain nondeterministic CPU instructions, e.g., CPUID.
+The Dettrace prototype currently only works for x86-64, i586, aarch64, armv7/armv6, powerpc, ppc64, ppc64le, s390x and maybe riscv64 archs. While not strictly necessary, portability guarantees are strongest when the CPU supports intercepting certain nondeterministic CPU instructions, e.g., CPUID.
 
 ### Software dependencies
 Dettrace works well with kernel versions 4.8 through 7.2 (only minor modifications should be necessary to allow Dettrace to work in newer kernel versions). Kernel version < 4.8 use a slower
