@@ -51,6 +51,31 @@ bool kernelCheck(int a, int b, int c) {
                                                                   : false);
 }
 
+/**
+ * Whether num can be a system call number of this architecture: an index
+ * into the kernel's table, or one of the negative sentinels dettrace
+ * itself sets where an architecture lacks a call (see
+ * syscallCompat.hpp). x32 marks every number with __X32_SYSCALL_BIT and
+ * keeps the calls whose arguments need the 64-bit layout (rt_sigaction,
+ * ioctl, execve, ...) in a range of its own just above 512.
+ */
+static inline bool isKnownSyscallNumber(long num) {
+  if (isSentinelSyscall(num)) {
+    return true;
+  }
+  // NB: __X32_SYSCALL_BIT is defined when building for x86_64 as well,
+  // so ask for the ILP32 data model too.
+#if defined(__x86_64__) && defined(__ILP32__)
+  if ((num & __X32_SYSCALL_BIT) == 0) {
+    return false;
+  }
+  num &= ~(long)__X32_SYSCALL_BIT;
+  return num >= 0 && num <= SYSTEM_CALL_COUNT + 128;
+#else
+  return num >= 0 && num <= SYSTEM_CALL_COUNT;
+#endif
+}
+
 static inline string getSyscallName(int syscallNum)
 {
   static int arch_token = seccomp_arch_native();
@@ -187,7 +212,7 @@ bool execution::handleNonEventExit(const pid_t traceesPid) {
 bool execution::handlePreSystemCall(state& currState, const pid_t traceesPid) {
   int syscallNum = tracer.getSystemCallNumber();
 
-  if (syscallNum < 0 || syscallNum > SYSTEM_CALL_COUNT) {
+  if (!isKnownSyscallNumber(syscallNum)) {
     runtimeError("Unkown system call number: " + to_string(syscallNum));
   }
 
@@ -253,11 +278,8 @@ bool execution::handlePreSystemCall(state& currState, const pid_t traceesPid) {
 void execution::handlePostSystemCall(state& currState) {
   int syscallNum = tracer.getSystemCallNumber();
 
-  // No idea what this system call is! error out. Sentinel numbers are
-  // fine: dettrace itself sets them via changeSystemCall on architectures
-  // lacking the corresponding syscall, see syscallCompat.hpp.
-  if ((syscallNum < 0 && !isSentinelSyscall(syscallNum)) ||
-      syscallNum > SYSTEM_CALL_COUNT) {
+  // No idea what this system call is! error out.
+  if (!isKnownSyscallNumber(syscallNum)) {
     runtimeError("Unkown system call number: " + to_string(syscallNum));
   }
 
@@ -932,7 +954,7 @@ bool execution::handleSeccomp(const pid_t traceesPid) {
     // Fetch real system call from register.
     tracer.updateState(traceesPid);
     syscallNum = tracer.getSystemCallNumber();
-    if (0 <= syscallNum && syscallNum < SYSTEM_CALL_COUNT) {
+    if (isKnownSyscallNumber(syscallNum)) {
       runtimeError(
           "No filter rule for system call: " + getSyscallName(syscallNum));
     } else {

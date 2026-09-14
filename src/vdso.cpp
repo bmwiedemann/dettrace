@@ -73,29 +73,30 @@ static const unsigned long vdsoPoison = BREAK_INSN;
  */
 // clang-format off
 #if defined(__x86_64__)
-static const unsigned char __vdso_time[] = {
-    0xb8, 0xc9, 0x0, 0x0, 0x0                     // mov %SYS_time, %eax
-  , 0x0f, 0x05                                    // syscall
-  , 0xc3                                          // retq
-  , 0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00      // nopl 0x0(%rax, %rax, 1)
-  , 0x00 };
+// The x86_64 vDSO is also the one an x32 process gets, so the syscall
+// numbers come from the headers: x32 marks every number it uses with
+// __X32_SYSCALL_BIT.
+#define X86_64_SYSCALL_STUB(nr)                                            \
+  {                                                                        \
+    0xb8, SYSNUM_LE32(nr),       /* mov $nr, %eax */                       \
+    0x0f, 0x05,                  /* syscall */                             \
+    0xc3,                        /* retq */                                \
+    0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00 /* nopl 0x0(%rax,%rax,1) */ \
+  }
 
-static const unsigned char __vdso_clock_gettime[] = {
-    0xb8, 0xe4, 0x00, 0x00, 0x00                // mov SYS_clock_gettime, %eax
-  , 0x0f, 0x05                                  // syscall
-  , 0xc3                                        // retq
-  , 0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00    // nopl 0x0(%rax, %rax, 1)
-  , 0x00 };
+static const unsigned char __vdso_time[] = X86_64_SYSCALL_STUB(SYS_time);
+
+static const unsigned char __vdso_clock_gettime[] =
+    X86_64_SYSCALL_STUB(SYS_clock_gettime);
 
 // The generic vDSO's clock_getres reads the resolution from the vvar
 // page, which disableVdso maps PROT_NONE, so it has to become a syscall
 // too (clock_getres is not intercepted, its result is deterministic).
-static const unsigned char __vdso_clock_getres[] = {
-    0xb8, 0xe5, 0x00, 0x00, 0x00                // mov SYS_clock_getres, %eax
-  , 0x0f, 0x05                                  // syscall
-  , 0xc3                                        // retq
-  , 0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00    // nopl 0x0(%rax, %rax, 1)
-  , 0x00 };
+static const unsigned char __vdso_clock_getres[] =
+    X86_64_SYSCALL_STUB(SYS_clock_getres);
+
+static const unsigned char __vdso_gettimeofday[] =
+    X86_64_SYSCALL_STUB(SYS_gettimeofday);
 
 // returns 0 regardless
 static const unsigned char __vdso_getcpu[] = {
@@ -108,13 +109,6 @@ static const unsigned char __vdso_getcpu[] = {
   , 0x31, 0xc0                                         // xor %eax, %eax
   , 0xc3                                               // retq
   , 0x0f, 0x1f, 0x80, 0x00, 0x00, 0x00, 0x00 };        // nopl 0x0(%rax)
-
-static const unsigned char __vdso_gettimeofday[] = {
-    0xb8, 0x60, 0x00, 0x00, 0x00                 // mov SYS_gettimeofday, %eax
-  , 0x0f, 0x05                                   // syscall
-  , 0xc3                                         // retq
-  , 0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00     // nopl 0x0(%rax, %rax, 1)
-  , 0x00 };
 
 // vDSO getrandom (added in kernel 6.11) produces random bytes without a
 // syscall that could be intercepted, so make callers fall back to the
