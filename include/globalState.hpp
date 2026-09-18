@@ -38,7 +38,10 @@ public:
       logical_clock::time_point epoch,
       bool allow_network = false,
       bool with_proc_overrides = true,
-      bool hide_host_topology = true);
+      bool hide_host_topology = true,
+      // Defaults to the safe direction, unlike the flags above it: false
+      // means keep refusing, which is only ever a stricter guest.
+      bool sysfs_cpu_overridden = false);
 
   /**
    * Reference to our global program logger.
@@ -164,6 +167,14 @@ public:
    * the host's CPU topology, which needs no mount namespace.
    */
   bool hide_host_topology;
+
+  /**
+   * True when our canonical single-CPU tree is mounted over
+   * /sys/devices/system/cpu, so that refusing to open it would hide nothing
+   * the mount does not already hide. False leaves the host's own tree
+   * underneath, and the refusal is what keeps it from the guest.
+   */
+  bool sysfs_cpu_overridden;
 
   /**
    * allow trap CPUID. this can be set to false

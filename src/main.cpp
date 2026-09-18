@@ -239,14 +239,36 @@ static int run_main(programArgs& args) {
   };
   // Same, for a source we may legitimately not ship: there is no canonical
   // /proc/cpuinfo for architectures nobody has written one for. Every other
-  // override is expected to be installed, and mounting it still fails loudly
-  // if it is missing, so that a broken install cannot quietly serve the
-  // host's values.
+  // override is expected to be installed. Note that a missing one is not
+  // fatal -- every override is best-effort, since not every target exists on
+  // every kernel -- so a broken install serves the host's values with only a
+  // warning. Where that matters beyond the file itself, as it does for the
+  // sysfs CPU tree below, check the source separately.
   auto addOverrideIfShipped = [&](const char* src, const char* target) {
     if (overrideSourceExists(args.pathToChroot + src)) {
       addOverride(src, target, true);
     }
   };
+
+  // Whether the overrides are more than a request: without a mount namespace
+  // -- --host-mountns, and --in-docker, which clears every namespace flag --
+  // nothing of ours is mounted at all and the guest keeps the host's
+  // /proc/cpuinfo and /proc/stat.
+  const bool procOverridesMounted =
+      args.with_proc_overrides && (cloneFlags & CLONE_NEWNS) != 0;
+
+  // Whether the canonical /sys/devices/system/cpu in particular can really be
+  // put in front of the host's. Narrower than the above, and every extra term
+  // is load-bearing: --already-in-chroot resolves the source to the host's own
+  // directory, so the bind would succeed while changing nothing, and a stale
+  // or partial install tree has no such source to bind. Getting this wrong is
+  // not a failed mount but a silent one -- the overrides are best-effort, so
+  // the guest would read the host's real topology while the open hook believed
+  // the tree was ours.
+  const bool sysfsCpuOverridden =
+      procOverridesMounted && !args.alreadyInChroot &&
+      overrideSourceExists(
+          args.pathToChroot + "/sys/devices/system/cpu/possible");
 
   if (args.with_proc_overrides) {
     addOverride("/proc/meminfo", "/proc/meminfo", true);
@@ -273,6 +295,17 @@ static int run_main(programArgs& args) {
     // Both of these agree with what sysinfo(2) reports.
     addOverride("/proc/uptime", "/proc/uptime", true);
     addOverride("/proc/loadavg", "/proc/loadavg", true);
+    // Readers of the CPU count in sysfs -- glibc, hwloc, lscpu -- open this
+    // directory and then read relative to that fd, which the path matching in
+    // isHostCpuTopologyPath() cannot follow. Bind our own single-CPU tree over
+    // it: that hides the host's cpuN directories by construction rather than
+    // by string match, and gives a count that agrees with sched_getaffinity,
+    // /proc/cpuinfo and /proc/stat. Refusing the open instead, which is what
+    // still happens where this mount cannot be applied, left lscpu unable to
+    // run at all.
+    if (sysfsCpuOverridden) {
+      addOverride("/sys/devices/system/cpu", "/sys/devices/system/cpu", true);
+    }
   }
 
   if (args.with_etc_overrides) {
@@ -312,17 +345,15 @@ static int run_main(programArgs& args) {
       .with_devrand_overrides = args.with_devrand_overrides,
       // The syscall-level half of the canonical machine (the affinity
       // emulation and the /sys/devices/system/cpu hiding) only makes sense
-      // when the mount-level half can be applied too. Without a mount
-      // namespace -- --host-mountns, and --in-docker, which clears every
-      // namespace flag -- the guest keeps the host's /proc/cpuinfo and
-      // /proc/stat, so telling it that it has one CPU while nproc still reads
-      // the host's count off /proc/stat would leave it unable to pin the
-      // threads it just decided to spawn.
-      .with_proc_overrides =
-          args.with_proc_overrides && (cloneFlags & CLONE_NEWNS) != 0,
+      // when the mount-level half can be applied too: telling the guest that
+      // it has one CPU while nproc still reads the host's count off the
+      // host's own /proc/stat would leave it unable to pin the threads it
+      // just decided to spawn.
+      .with_proc_overrides = procOverridesMounted,
       // Not mount-gated: refusing to open the host's sysfs topology needs no
       // namespace, and it was unconditional before this change.
       .hide_host_topology = args.with_proc_overrides,
+      .sysfs_cpu_overridden = sysfsCpuOverridden,
       .debug_level = args.debugLevel,
       .use_color = args.useColor,
       .print_statistics = args.printStatistics,

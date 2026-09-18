@@ -3,6 +3,7 @@
 
 #include <fcntl.h>
 #include <sstream>
+#include <vector>
 
 #include "util.hpp"
 
@@ -552,35 +553,96 @@ string resolve_tracee_path(
 }
 // =======================================================================================
 /**
- * Is this path in one of the sysfs subtrees that describe the host's CPU
- * topology?
+ * Collapse "//", "." and ".." in an absolute path, the way the kernel would
+ * walk it, so that one prefix test recognises every spelling of the same
+ * file. Lexical only: no symlink is followed and the filesystem is not
+ * consulted, and a relative path is returned untouched, since resolving one
+ * would need the tracee's cwd or dirfd.
  *
- * No sysfs of ours is mounted over the host's, so hiding these is the only
- * thing keeping that topology away from the guest:
- * possible/present/online/offline/kernel_max, the per-CPU directories, the
- * cpu bus device list and the NUMA nodes all describe hardware the canonical
- * machine does not have. With the directories themselves gone, glibc's
- * get_nprocs_conf() cannot opendir() them to count cpuN entries and falls
- * back to get_nprocs(), i.e. to our sched_getaffinity, which says 1.
+ * A ".." at the root stays at the root, as it does in the kernel.
+ */
+static string lexicallyNormalizePath(const string& path) {
+  if (path.empty() || path[0] != '/') {
+    return path;
+  }
+
+  vector<string> parts;
+  for (size_t i = 0; i < path.size();) {
+    size_t end = path.find('/', i);
+    if (end == string::npos) {
+      end = path.size();
+    }
+    const string component = path.substr(i, end - i);
+    if (component == "..") {
+      if (!parts.empty()) {
+        parts.pop_back();
+      }
+    } else if (!component.empty() && component != ".") {
+      parts.push_back(component);
+    }
+    i = end + 1;
+  }
+
+  string normalized;
+  for (const auto& component : parts) {
+    normalized += "/";
+    normalized += component;
+  }
+  return normalized.empty() ? "/" : normalized;
+}
+// =======================================================================================
+/**
+ * Is this path in one of the sysfs subtrees that describe the host's CPU
+ * topology, and is refusing to open it the only thing keeping that topology
+ * away from the guest?
+ *
+ * The NUMA nodes and the cpu bus device list describe hardware the canonical
+ * machine does not have, and nothing of ours is mounted over them, so they
+ * are hidden. With the directories gone, a glibc old enough to count cpuN
+ * entries cannot opendir() them, and one new enough to read the cpu masks
+ * instead (2.36 and later read possible/online) finds nothing to read; both
+ * fall back to get_nprocs(), i.e. to our sched_getaffinity, which says 1.
+ *
+ * /sys/devices/system/cpu is different: where the mount can be applied, our
+ * own single-CPU tree sits over it (see main.cpp), which hides the host's
+ * cpuN directories by construction and serves both of those glibc paths the
+ * same count. Hiding it there would be no safer and costs more than it sounds
+ * -- these readers open the directory and then read relative to that fd, so
+ * the refused open is the whole of lscpu's "failed to determine number of
+ * CPUs" rather than something it falls back from. Where the mount is not
+ * there (--host-mountns, --in-docker, --already-in-chroot, an install tree
+ * without the canonical files) the refusal is still the only thing keeping
+ * the host's tree away, and cpuTreeIsOurs is false.
  *
  * Matches the path as the tracee wrote it, so a guest that chdir()s into one
  * of these directories and then opens a relative path still reads the host's
- * values. Every caller that matters -- glibc, libgomp, hwloc, lscpu -- uses
- * absolute paths or opens the directory first, which is refused here.
+ * values.
  */
-static bool isHostCpuTopologyPath(const string& path) {
-  static const string subtrees[] = {
-      "/sys/devices/system/cpu",
+static bool isHostCpuTopologyPath(const string& path, bool cpuTreeIsOurs) {
+  // Compare what the path names, not how it is spelled. A prefix test on the
+  // raw string matches only one of the many spellings of the same file, and
+  // the rest read straight through: //sys/devices/system/node/node0/cpulist
+  // and /sys/devices/system/./node/... are the host's NUMA topology, and
+  // /sys/devices/system/cpu/../node/... climbs out of the tree we do mount.
+  // Purely lexical, so a symlink still resolves wherever it points; that is
+  // the same reach the raw prefixes had.
+  const string clean = lexicallyNormalizePath(path);
+
+  auto isUnder = [&clean](const string& dir) {
+    return clean.compare(0, dir.size(), dir) == 0 &&
+           (clean.size() == dir.size() || clean[dir.size()] == '/');
+  };
+
+  static const string alwaysHidden[] = {
       "/sys/devices/system/node",
       "/sys/bus/cpu",
   };
-  for (const auto& dir : subtrees) {
-    if (path.compare(0, dir.size(), dir) == 0 &&
-        (path.size() == dir.size() || path[dir.size()] == '/')) {
+  for (const auto& dir : alwaysHidden) {
+    if (isUnder(dir)) {
       return true;
     }
   }
-  return false;
+  return !cpuTreeIsOurs && isUnder("/sys/devices/system/cpu");
 }
 // =======================================================================================
 bool handlePreOpens(
@@ -684,7 +746,9 @@ Linux acghaswellcat16 4.15.0-43-generic #46-Ubuntu SMP Thu Dec 6 14:45:28 UTC
     gs.devRandomOpens++;
   } else if (path == "/dev/urandom") {
     gs.devUrandomOpens++;
-  } else if (gs.hide_host_topology && isHostCpuTopologyPath(path)) {
+  } else if (
+      gs.hide_host_topology &&
+      isHostCpuTopologyPath(path, gs.sysfs_cpu_overridden)) {
     failSystemCall(gs, s, t, ENOENT);
     return false;
   }

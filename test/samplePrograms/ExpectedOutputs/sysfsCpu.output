@@ -1,0 +1,14 @@
+possible: "0"
+present: "0"
+online: "0"
+offline: ""
+kernel_max: "0"
+cpu0/topology/core_id: "0"
+cpu0/topology/physical_package_id: "0"
+cpu0/topology/thread_siblings: "1"
+refused /sys/devices/system/cpu/../../../bus/cpu/devices: yes
+refused //sys/bus/cpu/devices: yes
+refused /sys/devices/system/./cpu/../../../bus/cpu/devices: yes
+refused /sys/devices/system/cpu/../node/node0/cpulist: yes
+/sys/devices/system/cpu/cpu0/../possible: "0"
+get_nprocs_conf() = 1

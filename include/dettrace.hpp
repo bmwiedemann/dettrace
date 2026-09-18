@@ -159,6 +159,15 @@ typedef struct {
   // namespace, so it stays on in --in-docker, where it was on before.
   bool hide_host_topology;
 
+  // Whether our own canonical tree is being mounted over
+  // /sys/devices/system/cpu, which is what makes hiding that one subtree
+  // unnecessary. Deliberately narrower than with_proc_overrides: that one
+  // says we asked for the overrides, this one says this particular mount can
+  // actually be applied, so that a stale install tree or a bind we cannot
+  // perform leaves the old refusal in place rather than serving the host's
+  // topology.
+  bool sysfs_cpu_overridden;
+
   // Logging options
   int debug_level;
   bool use_color;

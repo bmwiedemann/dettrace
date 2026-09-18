@@ -12,6 +12,14 @@ ifneq ($(origin DETTRACE_NO_CPUID_INTERCEPTION),undefined)
 HAVE_CPUID_TRAP :=
 endif
 
+# dettrace mounts its canonical single-CPU tree over the host's
+# /sys/devices/system/cpu. Where the host has no such tree there is nothing to
+# mount it over, dettrace correctly falls back to refusing the open, and this
+# test has nothing to assert.
+ifneq ($(wildcard /sys/devices/system/cpu/possible),)
+SIMPLE_ROOTS := $(SIMPLE_ROOTS) sysfsCpu
+endif
+
 # Tests of x86 instructions dettrace traps (rdtsc, rdtscp, cpuid).
 ifeq ($(ARCH),x86_64)
 SIMPLE_ROOTS := $(SIMPLE_ROOTS) rdtsc rdtscp cpuid_fault

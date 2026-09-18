@@ -186,6 +186,7 @@ public:
       bool allow_network,
       bool with_proc_overrides,
       bool hide_host_topology,
+      bool sysfs_cpu_overridden,
       logical_clock::time_point epoch,
       logical_clock::duration clock_step,
       SysEnter sys_enter_hook,

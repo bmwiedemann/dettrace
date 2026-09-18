@@ -403,6 +403,7 @@ static int _dettrace_child_impl(const CloneArgs* clone_args) {
                   opts->allow_network,
                   opts->with_proc_overrides,
                   opts->hide_host_topology,
+                  opts->sysfs_cpu_overridden,
                   logical_clock::from_time_t(opts->epoch),
                   chrono::microseconds(opts->clock_step),
                   opts->sys_enter,
