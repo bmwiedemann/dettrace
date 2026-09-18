@@ -3,9 +3,25 @@ SIMPLE_ROOTS=simpleFork inverseFork nestedFork vfork clock_gettime getpid uname 
 
 ARCH := $(shell uname -m)
 
+# Whether dettrace will be able to arm CPUID faulting, which it does only with
+# the kernel support the CPU has to expose and only when the environment does
+# not switch it off. $(origin) rather than ifndef: dettrace tests getenv() !=
+# NULL, so an empty value counts as set there and has to count as set here.
+HAVE_CPUID_TRAP := $(shell grep -qw cpuid_fault /proc/cpuinfo && echo 1)
+ifneq ($(origin DETTRACE_NO_CPUID_INTERCEPTION),undefined)
+HAVE_CPUID_TRAP :=
+endif
+
 # Tests of x86 instructions dettrace traps (rdtsc, rdtscp, cpuid).
 ifeq ($(ARCH),x86_64)
 SIMPLE_ROOTS := $(SIMPLE_ROOTS) rdtsc rdtscp cpuid_fault
+# cpuidLeaves reads the emulated tables back, so unlike cpuid_fault -- which
+# skips itself -- it only means anything where dettrace can actually arm CPUID
+# faulting. Without that the instruction runs on the real CPU and the test
+# prints the host's values, the one thing this suite exists to rule out.
+ifeq ($(HAVE_CPUID_TRAP),1)
+SIMPLE_ROOTS := $(SIMPLE_ROOTS) cpuidLeaves
+endif
 # cpuid.c's inline assembly does not build with current gcc and its .ok
 # rule has been disabled below for years; not built by default.
 endif
@@ -45,10 +61,8 @@ RT_BINARIES= $(addsuffix .bin,$(RT_ROOTS))
 # does not, cpuid_fault.c skips itself there for the same reason).
 CXX_ROOTS=
 ifeq ($(ARCH),x86_64)
-ifndef DETTRACE_NO_CPUID_INTERCEPTION
-ifeq ($(shell grep -qw cpuid_fault /proc/cpuinfo && echo 1),1)
+ifeq ($(HAVE_CPUID_TRAP),1)
 CXX_ROOTS=random_device
-endif
 endif
 endif
 CXX_BINARIES= $(addsuffix .bin,$(CXX_ROOTS))

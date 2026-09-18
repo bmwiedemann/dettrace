@@ -1008,7 +1008,7 @@ struct CPUIDRegs {
 };
 
 // clang-format off
-static const struct CPUIDRegs cpuids[] =
+static constexpr struct CPUIDRegs cpuids[] =
   {
    { 0x0000000D, 0x756E6547, 0x6C65746E, 0x49656E69, },
    { 0x00000663, 0x00000800, 0x80202001, 0x078BFBFD, },
@@ -1026,7 +1026,7 @@ static const struct CPUIDRegs cpuids[] =
    { 0x00000000, 0x00000000, 0x00000000, 0x00000000, },
   };
 
-static const struct CPUIDRegs extended_cpuids[] =
+static constexpr struct CPUIDRegs extended_cpuids[] =
   {
    { 0x8000000A, 0x756E6547,0x6C65746E,0x49656E69, },
    { 0x00000663, 0x00000000,0x00000001,0x20100800, },
@@ -1041,6 +1041,31 @@ static const struct CPUIDRegs extended_cpuids[] =
    { 0x00000000, 0x00000000,0x00000000,0x00000000, },
 };
 // clang-format on
+
+// The tables are indexed by leaf, so the highest leaf each one describes is
+// one below its entry count. The switch in handleSignal() once used the count
+// itself and answered leaf 0x0E and leaf 0x8000000B one element past the end.
+static constexpr unsigned long maxCpuidLeaf =
+    sizeof(cpuids) / sizeof(cpuids[0]) - 1;
+static constexpr unsigned long maxExtendedCpuidLeaf =
+    0x80000000ul + sizeof(extended_cpuids) / sizeof(extended_cpuids[0]) - 1;
+
+// Leaf 0 and leaf 0x80000000 each report the highest leaf of their range, so
+// a table has to agree with its own first entry.
+static_assert(
+    maxCpuidLeaf == cpuids[0].eax, "cpuids[0].eax must be the highest leaf");
+static_assert(
+    maxExtendedCpuidLeaf == extended_cpuids[0].eax,
+    "extended_cpuids[0].eax must be the highest extended leaf");
+
+// Answering an out-of-range leaf with zeros, as handleSignal() does, is also
+// what an Intel CPU does -- it repeats the highest basic leaf -- but only
+// while that leaf is itself zero. Fill leaf 0x0D in and that stops being
+// faithful, silently, so tie the two together here.
+static_assert(
+    0 == (cpuids[maxCpuidLeaf].eax | cpuids[maxCpuidLeaf].ebx |
+          cpuids[maxCpuidLeaf].ecx | cpuids[maxCpuidLeaf].edx),
+    "the highest basic leaf must be zero for out-of-range leaves to repeat it");
 
 // =======================================================================================
 void execution::handleSignal(int sigNum, const pid_t traceesPid) {
@@ -1107,33 +1132,49 @@ void execution::handleSignal(int sigNum, const pid_t traceesPid) {
 
       // fill in canonical cpuid return values
 
-      const unsigned long nleafs = sizeof(cpuids) / sizeof(cpuids[0]);
-      VERIFY(nleafs == 1 + cpuids[0].eax);
+      // The instruction selects on EAX alone; the upper half of RAX is not
+      // part of the leaf number, so it must not reach the switch either.
+      const uint32_t askedLeaf = (uint32_t)REG_AX(regs);
 
-      const unsigned long nleafs_ext =
-          0x80000000ul + sizeof(extended_cpuids) / sizeof(extended_cpuids[0]);
-      VERIFY(nleafs_ext == 1 + extended_cpuids[0].eax);
-
-      switch ((unsigned long)REG_AX(regs)) {
-      case 0x0 ... nleafs: {
-        long leaf = REG_AX(regs);
-        const struct CPUIDRegs& cpuid = cpuids[leaf];
+      switch (askedLeaf) {
+      case 0x0 ... maxCpuidLeaf: {
+        const struct CPUIDRegs& cpuid = cpuids[askedLeaf];
         tracer.writeRax(cpuid.eax);
         tracer.writeRbx(cpuid.ebx);
         tracer.writeRcx(cpuid.ecx);
         tracer.writeRdx(cpuid.edx);
       } break;
-      case 0x80000000ul ... nleafs_ext: {
-        long leaf = REG_AX(regs) - 0x80000000ul;
-        const struct CPUIDRegs& cpuid_ext = extended_cpuids[leaf];
+      case 0x80000000ul ... maxExtendedCpuidLeaf: {
+        const struct CPUIDRegs& cpuid_ext =
+            extended_cpuids[askedLeaf - 0x80000000ul];
         tracer.writeRax(cpuid_ext.eax);
         tracer.writeRbx(cpuid_ext.ebx);
         tracer.writeRcx(cpuid_ext.ecx);
         tracer.writeRdx(cpuid_ext.edx);
       } break;
-      default:
-        runtimeError(
-            "CPUID unsupported %eax = " + to_string(REG_AX(regs)));
+      default: {
+        // A leaf the canonical machine does not describe: the hypervisor
+        // range at 0x40000000, which our own leaf 1 invites the guest to
+        // probe by setting the hypervisor bit, or anything a newer CPU would
+        // answer. Zeros are what a CPU reports for a reserved leaf, and any
+        // fixed answer is deterministic -- which is the whole requirement
+        // here. Killing the run instead, as this used to, made a guest as
+        // ordinary as lscpu fatal to the tracer.
+        //
+        // Logged at the same importance as the interception itself: this is
+        // the case where we answered without modelling anything, so whoever
+        // is reading a trace to find out why a guest behaves oddly wants to
+        // see it exactly where they see the cpuid that caused it.
+        auto msg =
+            "[%d] Tracer: cpuid leaf %#x is not one of ours, "
+            "answering with zeros.\n";
+        auto coloredMsg = log.makeTextColored(Color::blue, msg);
+        log.writeToLog(Importance::inter, coloredMsg, traceesPid, askedLeaf);
+        tracer.writeRax(0);
+        tracer.writeRbx(0);
+        tracer.writeRcx(0);
+        tracer.writeRdx(0);
+      } break;
       }
 
       return;
