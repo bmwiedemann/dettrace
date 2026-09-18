@@ -580,12 +580,23 @@ static int runTracee(
           // this a guest that writes one -- `echo > /proc/cpuinfo`, which it
           // expects to fail -- silently replaces the canonical data for every
           // later run on the machine.
-          const unsigned long roFlags = MS_BIND | MS_REMOUNT | MS_RDONLY;
+          //
+          // nosuid, nodev and noexec are asked for not as a policy of ours but
+          // because a remount in a user namespace may not drop a flag the
+          // kernel locked when the namespace was created: wherever the install
+          // tree lives on a nosuid or nodev filesystem -- /tmp and /home
+          // commonly are -- a remount naming only MS_RDONLY fails with EPERM
+          // and leaves the file writable. Naming them is only ever a
+          // tightening, and every target of this is a canonical data file that
+          // nothing should be executing anyway. Atime needs no such care: a
+          // remount that names no atime flag keeps the current one, so that
+          // lock is never contested.
+          const unsigned long roFlags = MS_BIND | MS_REMOUNT | MS_RDONLY |
+                                        MS_NOSUID | MS_NODEV | MS_NOEXEC;
           if (mount(nullptr, m->target, nullptr, roFlags, nullptr) == -1) {
-            const char* reason = strerror(errno);
             std::cerr << "Warning: unable to make "
                       << std::string{m->target ? m->target : "none"}
-                      << " read-only: " << reason << "\n";
+                      << " read-only: " << strerror(errno) << "\n";
           }
         }
         ++mounts;
