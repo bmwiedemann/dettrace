@@ -17,9 +17,16 @@ CLANG_TIDY ?= clang-tidy
 # stat64 that tracees use there (see include/syscallCompat.hpp); a no-op on
 # the 64-bit architectures.
 DEFINES := -D_GNU_SOURCE=1 -D_POSIX_C_SOURCE=20181101 -D__USE_XOPEN=1 -D_FILE_OFFSET_BITS=64 -DAPP_VERSION=\"$(DTVERSION)\" -DAPP_BUILDID=\"$(BUILDID)\"
+# include/timeABI.hpp keeps dettrace's own struct timespec, struct timeval,
+# struct stat64 and time_t the kernel's 32-bit-time_t ones where the system
+# call ABI is 32-bit. It has to be a forced include rather than a -D: a
+# distribution's flags arrive in EXTRA_CXXFLAGS, after $(DEFINES), and a
+# later -D_TIME_BITS=64 would win, whereas a -include file is processed
+# after all -D options wherever it stands on the command line.
+FORCE_INCLUDE := -include include/timeABI.hpp
 INCLUDE := -I include -I cxxopts/include $(shell pkg-config --cflags libseccomp)
-CXXFLAGS += -g -O3 -std=c++14 -Wall $(INCLUDE) $(DEFINES) $(EXTRA_CXXFLAGS)
-CFLAGS += -g -O3 -Wall -Wshadow $(INCLUDE) $(DEFINES) $(EXTRA_CFLAGS)
+CXXFLAGS += -g -O3 -std=c++14 -Wall $(INCLUDE) $(DEFINES) $(FORCE_INCLUDE) $(EXTRA_CXXFLAGS)
+CFLAGS += -g -O3 -Wall -Wshadow $(INCLUDE) $(DEFINES) $(FORCE_INCLUDE) $(EXTRA_CFLAGS)
 LIBS := -pthread -lseccomp
 
 # Source files and objects to build.

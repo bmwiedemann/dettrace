@@ -180,6 +180,38 @@ static inline bool isSentinelSyscall(long num) {
 #define SYS_lstat SYS_lstat64
 #undef SYS_fstat
 #define SYS_fstat SYS_fstat64
+
+/*
+ * The tracee-facing structures on those architectures. dettrace hands the
+ * tracee its own struct timespec, struct timeval, struct itimerval, struct
+ * utimbuf, struct rusage, struct stat64 and bare time_t values, so they
+ * have to be the ones the legacy system calls take: the kernel's 32-bit
+ * time_t forms. include/timeABI.hpp forces that; these are the proof that
+ * it took, stated once for every translation unit that builds such a
+ * structure (src/dettraceSystemCall.cpp and src/utilSystemCalls.cpp).
+ *
+ * The size of struct stat64 itself is architecture-specific, so the check
+ * is on the timespec field that grows, which is not.
+ */
+#include <sys/resource.h> /* struct rusage */
+#include <sys/stat.h> /* struct stat64 */
+#include <sys/time.h> /* struct timeval, struct itimerval */
+#include <time.h> /* struct timespec, struct itimerspec, time_t */
+#include <utime.h> /* struct utimbuf */
+
+#define DETTRACE_TIME_ABI_MSG                                            \
+  "the 32-bit system call ABI needs 32-bit time_t; include/timeABI.hpp " \
+  "should have forced it, see the -include in the Makefile"
+
+static_assert(sizeof(time_t) == 4, DETTRACE_TIME_ABI_MSG);
+static_assert(sizeof(struct timespec) == 8, DETTRACE_TIME_ABI_MSG);
+static_assert(sizeof(struct timeval) == 8, DETTRACE_TIME_ABI_MSG);
+static_assert(sizeof(struct itimerspec) == 16, DETTRACE_TIME_ABI_MSG);
+static_assert(sizeof(struct itimerval) == 16, DETTRACE_TIME_ABI_MSG);
+static_assert(sizeof(struct utimbuf) == 8, DETTRACE_TIME_ABI_MSG);
+static_assert(
+    sizeof(((struct rusage*)0)->ru_utime) == 8, DETTRACE_TIME_ABI_MSG);
+static_assert(sizeof(((struct stat64*)0)->st_atim) == 8, DETTRACE_TIME_ABI_MSG);
 #endif
 
 /*

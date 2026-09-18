@@ -60,23 +60,11 @@ static bool fd_is_nonblocking(state& s, int fd);
  * dettrace hands the tracee its own struct timespec, struct timeval and
  * struct stat64, so those have to be the structures the system calls it
  * emulates actually take. On the architectures with a 32-bit syscall ABI
- * the legacy calls take the kernel's 32-bit time_t forms, which is what
- * glibc gives us unless the build asks for _TIME_BITS=64 -- with which
- * every one of them grows and dettrace would write past the end of the
- * tracee's buffers. The *_time64 calls are a separate matter and go
- * through struct __kernel_timespec below. (x32 is ILP32 as well but has
- * 64-bit time throughout, hence the ABI test rather than the word size.)
+ * the legacy calls take the kernel's 32-bit time_t forms; include/
+ * timeABI.hpp pins the build to those, and include/syscallCompat.hpp
+ * asserts that it took. The *_time64 calls are a separate matter and go
+ * through struct __kernel_timespec below.
  */
-#ifdef DETTRACE_32BIT_SYSCALL_ABI
-static_assert(
-    sizeof(struct timespec) == 8 && sizeof(struct timeval) == 8,
-    "a 32-bit dettrace has to be built with 32-bit time_t, add "
-    "-D_TIME_BITS=32");
-static_assert(
-    sizeof(((struct stat64*)nullptr)->st_atim) == 8,
-    "a 32-bit dettrace has to be built with 32-bit time_t, add "
-    "-D_TIME_BITS=32");
-#endif
 
 // =======================================================================================
 // struct timespec as the tracee sees it. The 32-bit architectures have
@@ -112,6 +100,11 @@ static size_t traceeTimespecSize(ptracer& t) {
                             : sizeof(struct timespec);
 }
 
+// Known limitation: on the 32-bit architectures the struct timespec this
+// returns has a 32-bit tv_sec, so an absolute *_time64 deadline beyond 2038
+// is truncated here. Pre-existing, and only reachable through a tracee
+// passing such a deadline; fixing it means carrying 64-bit seconds through
+// the handlers rather than a struct timespec.
 static struct timespec readTraceeTimespec(
     ptracer& t, uint64_t addr, pid_t pid) {
   struct timespec ts;

@@ -42,11 +42,14 @@ The Dettrace prototype currently only works for x86-64, i586, x32, aarch64, armv
 Two build requirements come with the newer ports: loongarch64 needs
 libseccomp 2.6 or newer, which is where `SCMP_ARCH_LOONGARCH64` appeared,
 and x32 needs a libseccomp built for x32 itself so that its native
-architecture is the x32 one. A 32-bit build has to use 32-bit `time_t`
-(`-D_TIME_BITS=32`), since dettrace passes its own `struct timespec`,
-`struct timeval` and `struct stat64` to the tracee and the legacy system
-calls it emulates take the kernel's 32-bit forms; the build stops with a
-message if they do not match.
+architecture is the x32 one. A 32-bit build has to use 32-bit `time_t`,
+since dettrace passes its own `struct timespec`, `struct timeval` and
+`struct stat64` to the tracee and the legacy system calls it emulates take
+the kernel's 32-bit forms. The build selects that itself, in
+`include/timeABI.hpp`, so nothing has to be passed in and a packager need
+not keep `-D_TIME_BITS=64` out of the flags it hands to `make`; the build
+stops with a message if the structures still do not match. This concerns
+dettrace's own build only -- traced programs may use either time ABI.
 
 alpha was left out for one reason only: libseccomp has no alpha
 architecture, so `seccomp_init()`, `seccomp_arch_native()` and the syscall
