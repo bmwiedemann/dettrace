@@ -214,6 +214,19 @@ public:
    * us. */
   bool syscallInjected = false;
 
+  /**
+   * A pre-hook rewrote the first argument where the kernel does not take
+   * it from the register at the entry stop (riscv64, see
+   * ptracer::writeArg1). The call is then skipped, and at its exit stop
+   * executed again from the rewritten registers; that second entry runs
+   * no pre-hook, only the post-hook the first one asked for.
+   */
+  enum class argReplay { none, skipped, replayed };
+  argReplay argReplayStage = argReplay::none;
+  /** The number of the call to execute again, and the pre-hook's answer. */
+  long argReplayNr = 0;
+  bool argReplayCallPostHook = false;
+
   /** Whether we have injected a noop system call. Return value of the noop
       (currently, getpid) needs to be fixed up so that tracee doesn't notice
       the noop. */

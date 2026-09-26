@@ -370,6 +370,17 @@ int execution::runProgram() {
 #if defined(__s390x__)
         tracer.setSystemCallNumber(currentState.syscallNumber);
 #endif
+        if (currentState.argReplayStage == state::argReplay::skipped) {
+          // The kernel skipped this call, see handleSeccomp. Execute it
+          // now from the registers the pre-hook wrote: a trap taken
+          // afresh reads the first argument from the register.
+          currentState.argReplayStage = state::argReplay::replayed;
+          tracer.changeSystemCall(currentState.argReplayNr);
+          tracer.writeSyscallArgsToRegs();
+          tracer.rewindToSyscall();
+          states.at(traceesPid).callPostHook = false;
+          continue;
+        }
         handlePostSystemCall(currentState);
         // set callPostHook to default value for next iteration.
         states.at(traceesPid).callPostHook = false;
@@ -533,6 +544,12 @@ int execution::runProgram() {
       // overwrites the first argument register, so the live registers
       // still hold the clone flags on every architecture.
       tracer.captureSyscallArgs();
+#if defined(__riscv)
+      // Except on riscv, where a0 is gone by now and this is not a
+      // syscall stop that PTRACE_GET_SYSCALL_INFO would describe (see
+      // ptracer::updateState); the kernel still tells through /proc.
+      tracer.captureSyscallArgsFromProc();
+#endif
       int syscallNumber = (int)tracer.getSystemCallNumber();
       string msg = "none";
       bool isThread = false;
@@ -987,7 +1004,35 @@ bool execution::handleSeccomp(const pid_t traceesPid) {
   }
 #endif
 
-  auto callPostHook = handlePreSystemCall(states.at(traceesPid), traceesPid);
+  bool callPostHook;
+  state& currState = states.at(traceesPid);
+  if (currState.argReplayStage == state::argReplay::replayed) {
+    // This entry is the call executed again from the registers its
+    // pre-hook wrote (see below); that pre-hook has run, only the
+    // post-hook is still owed.
+    log.writeToLog(
+        Importance::info, "[Pid %d] Entered the replayed system call.\n",
+        traceesPid);
+    currState.argReplayStage = state::argReplay::none;
+    callPostHook = currState.argReplayCallPostHook;
+  } else {
+    callPostHook = handlePreSystemCall(currState, traceesPid);
+    if (tracer.takeArg1RewrittenAtEntry()) {
+      // The kernel would run the call with the original first argument.
+      // Skip it (number -1 executes nothing) and catch its exit stop, the
+      // event loop executes it again from there.
+      log.writeToLog(
+          Importance::info,
+          "[Pid %d] First argument rewritten, skipping the call to execute "
+          "it again.\n",
+          traceesPid);
+      currState.argReplayNr = tracer.getSystemCallNumber();
+      currState.argReplayCallPostHook = callPostHook;
+      currState.argReplayStage = state::argReplay::skipped;
+      tracer.changeSystemCall(-1);
+      callPostHook = true;
+    }
+  }
   // Persist the arguments for the post-hook only now, after the pre-hook
   // ran: writeArgN keeps the cache in sync, so a post-hook's argN() sees
   // what the pre-hook rewrote, exactly like the live registers used to on

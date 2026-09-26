@@ -57,6 +57,30 @@ void ptracer::captureSyscallArgs() {
   syscallArgs[5] = (unsigned long)REG_ARG6(regs);
 }
 
+#if defined(__riscv)
+void ptracer::captureSyscallArgsFromProc() {
+  // "nr arg1 .. arg6 sp pc", the arguments as syscall_get_arguments()
+  // reports them, which is orig_a0 for the first one.
+  string path = "/proc/" + to_string(traceePid) + "/syscall";
+  FILE* f = fopen(path.c_str(), "r");
+  if (f == nullptr) {
+    runtimeError("Unable to open " + path + ": " + string{strerror(errno)});
+  }
+  long nr;
+  unsigned long args[6];
+  int n = fscanf(
+      f, "%ld %lx %lx %lx %lx %lx %lx", &nr, &args[0], &args[1], &args[2],
+      &args[3], &args[4], &args[5]);
+  fclose(f);
+  if (n != 7 || nr != (long)getSystemCallNumber()) {
+    runtimeError(
+        path + " does not show the tracee inside system call " +
+        to_string(getSystemCallNumber()));
+  }
+  for (int i = 0; i < 6; i++) syscallArgs[i] = args[i];
+}
+#endif
+
 void ptracer::saveSyscallArgs(uint64_t out[6]) const {
   for (int i = 0; i < 6; i++) out[i] = syscallArgs[i];
 }
@@ -185,6 +209,25 @@ void ptracer::updateState(pid_t newPid) {
   readRegisters(traceePid, regs);
 #if defined(__s390x__)
   currentSyscall = decodeSyscallNumber();
+#endif
+#if defined(__riscv)
+  // At a system call entry the kernel has already replaced a0 with
+  // -ENOSYS (do_trap_ecall_u keeps the first argument in orig_a0, which
+  // no regset exposes, and passes that to the handler), so ask what it
+  // will pass and show a0 as the tracee loaded it, like every other
+  // architecture does at this stop. The register snapshots a pre-hook
+  // saves and restores around an injected call then carry the argument
+  // as well. Writing a0 back here is ignored, see writeArg1.
+  struct __ptrace_syscall_info info;
+  atSyscallEntry = false;
+  doPtrace(
+      (enum __ptrace_request)PTRACE_GET_SYSCALL_INFO, traceePid,
+      (void*)sizeof(info), &info);
+  if (info.op == PTRACE_SYSCALL_INFO_ENTRY ||
+      info.op == PTRACE_SYSCALL_INFO_SECCOMP) {
+    regs.a0 = info.entry.args[0];
+    atSyscallEntry = true;
+  }
 #endif
 
   return;
@@ -326,11 +369,32 @@ void ptracer::writeArg1(uint64_t val) {
   // of the system call that executes (see changeSystemCall).
   regs.orig_gpr2 = val;
 #else
+#if defined(__riscv)
+  // The handler gets its first argument from orig_a0, which a tracer can
+  // only write from Linux 6.15 on (PTRACE_SET_SYSCALL_INFO); a0 written
+  // at the entry stop does not reach the call. Note it, so that the call
+  // is skipped and executed again from these registers instead, see
+  // takeArg1RewrittenAtEntry. At an exit stop the write is fine: the
+  // only reason to write it there is a replay, which traps afresh.
+  if (atSyscallEntry && val != syscallArgs[0]) {
+    arg1RewrittenAtEntry = true;
+  }
+#endif
   REG_ORIG_ARG1(regs) = val;
   REG_ARG1(regs) = val;
 #endif
   syscallArgs[0] = val;
   writeRegisters(traceePid, regs);
+}
+
+bool ptracer::takeArg1RewrittenAtEntry() {
+#if defined(__riscv)
+  bool rewritten = arg1RewrittenAtEntry;
+  arg1RewrittenAtEntry = false;
+  return rewritten;
+#else
+  return false;
+#endif
 }
 
 void ptracer::writeArg2(uint64_t val) {

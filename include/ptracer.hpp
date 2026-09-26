@@ -669,6 +669,15 @@ public:
   void writeArg1(uint64_t val);
 
   /**
+   * Whether writeArg1 was called at a system call entry stop with a value
+   * the kernel will not take from the register there (riscv64, where the
+   * handler gets orig_a0, which no regset can write before Linux 6.15).
+   * Clears the flag. execution::handleSeccomp then skips the call and
+   * executes it again with the rewritten registers.
+   */
+  bool takeArg1RewrittenAtEntry();
+
+  /**
    * Write  value to Arg2: rsi register.
    * @param val new rsi register value
    */
@@ -752,6 +761,16 @@ public:
    * still hold the values the tracee passed.
    */
   void captureSyscallArgs();
+
+#if defined(__riscv)
+  /**
+   * Cache the arguments of the system call the tracee is inside of from
+   * /proc/PID/syscall. For a stop that is not a syscall stop, such as
+   * the PTRACE_EVENT_CLONE stop, where PTRACE_GET_SYSCALL_INFO reports
+   * nothing and a0 no longer holds the first argument (see updateState).
+   */
+  void captureSyscallArgsFromProc();
+#endif
 
   /**
    * Copy the cached system call arguments out to / in from per-tracee
@@ -939,6 +958,16 @@ private:
    * wrote.
    */
   uint64_t syscallArgs[6] = {0, 0, 0, 0, 0, 0};
+#if defined(__riscv)
+  /**
+   * Whether the tracee is stopped at a system call entry (the seccomp
+   * or PTRACE_SYSCALL entry stop) rather than at its exit or elsewhere,
+   * as PTRACE_GET_SYSCALL_INFO reports it in updateState; and whether
+   * writeArg1 has since asked for a value the kernel will ignore there.
+   */
+  bool atSyscallEntry = false;
+  bool arg1RewrittenAtEntry = false;
+#endif
 #if defined(__s390x__)
   /**
    * Number of the system call at the current stop. Decoded from the svc
