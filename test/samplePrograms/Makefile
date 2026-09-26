@@ -76,6 +76,8 @@ endif
 CXX_BINARIES= $(addsuffix .bin,$(CXX_ROOTS))
 
 DETTRACE=../../bin/dettrace --
+# Per-program time limit; a small board needs more than a build host.
+TEST_TIMEOUT ?= 5s
 DIFF_CMD=diff
 
 CC ?= clang
@@ -133,8 +135,8 @@ setup:
 	@echo "   Testing $(basename $<)..."
 # stdin from /dev/null: a closed stdin (as under rpmbuild) would change the
 # file descriptor numbers the programs see and print.
-	@python3 timeout.py 5s $(DETTRACE) ./$< < /dev/null > ActualOutputs/$(basename $<).output
-	@python3 timeout.py 5s $(DETTRACE) ./$< < /dev/null > ActualOutputs/$(basename $<).output2
+	@python3 timeout.py $(TEST_TIMEOUT) $(DETTRACE) ./$< < /dev/null > ActualOutputs/$(basename $<).output
+	@python3 timeout.py $(TEST_TIMEOUT) $(DETTRACE) ./$< < /dev/null > ActualOutputs/$(basename $<).output2
 # Require exactly the same output for consecutive runs on the same machine:
 	@$(DIFF_CMD) ActualOutputs/$(basename $<).output ActualOutputs/$(basename $<).output2 || \
           (echo "ERROR: NONDETERMINISM detected between runs 1 and 2."; exit 1)
@@ -171,30 +173,30 @@ setup:
 # Verify relative timestamps are the same under dettrace and not.
 relativeTimeStamps1.ok:
 	@echo "   Testing $@..."
-	@bash -c "diff <(ls -t .) <(python3 timeout.py 5s $(DETTRACE) ls -t .)"
+	@bash -c "diff <(ls -t .) <(python3 timeout.py $(TEST_TIMEOUT) $(DETTRACE) ls -t .)"
 
 
 # Verify creating a new file puts that file first in the list.
 relativeTimeStamps2.ok:
 	@echo "   Testing $@..."
-	@bash -c 'diff <(python3 timeout.py 5s $(DETTRACE) bash -c "touch temp.txt && ls -t . | head -n 1") <(touch temp.txt && ls -t . | head -n 1)'
+	@bash -c 'diff <(python3 timeout.py $(TEST_TIMEOUT) $(DETTRACE) bash -c "touch temp.txt && ls -t . | head -n 1") <(touch temp.txt && ls -t . | head -n 1)'
 
 getdents.ok: getdents.bin
 	@echo "   Testing $(basename $<)..."
-	@python3 timeout.py 5s $(DETTRACE) ./$< > ActualOutputs/$(basename $<).output.1
-	@python3 timeout.py 5s $(DETTRACE) ./$< > ActualOutputs/$(basename $<).output.2
+	@python3 timeout.py $(TEST_TIMEOUT) $(DETTRACE) ./$< > ActualOutputs/$(basename $<).output.1
+	@python3 timeout.py $(TEST_TIMEOUT) $(DETTRACE) ./$< > ActualOutputs/$(basename $<).output.2
 	@diff ActualOutputs/$(basename $<).output.1 ActualOutputs/$(basename $<).output.2
 
 getdents64.ok: getdents64.bin
 	@echo "   Testing $(basename $<)..."
-	@python3 timeout.py 5s $(DETTRACE) ./$< > ActualOutputs/$(basename $<).output.1
-	@python3 timeout.py 5s $(DETTRACE) ./$< > ActualOutputs/$(basename $<).output.2
+	@python3 timeout.py $(TEST_TIMEOUT) $(DETTRACE) ./$< > ActualOutputs/$(basename $<).output.1
+	@python3 timeout.py $(TEST_TIMEOUT) $(DETTRACE) ./$< > ActualOutputs/$(basename $<).output.2
 	@diff ActualOutputs/$(basename $<).output.1 ActualOutputs/$(basename $<).output.2
 
 sshkeygen.ok:
 	@echo "   Testing ssh-keygen..."
 	@rm -f thisKey thisKey.pub
-	@python3 timeout.py 5s $(DETTRACE) ssh-keygen -f thisKey -N \"\" > ActualOutputs/sshkeygen.output
+	@python3 timeout.py $(TEST_TIMEOUT) $(DETTRACE) ssh-keygen -f thisKey -N \"\" > ActualOutputs/sshkeygen.output
 	@$(DIFF_CMD) ActualOutputs/sshkeygen.output ExpectedOutputs/sshkeygen.output
 
 grep.ok:
@@ -206,70 +208,70 @@ grep.ok:
 	@echo "abcdefghi" >> grepTestFile
 	@echo "acegik" >> grepTestFile
 	@grep "bcd" grepTestFile > ExpectedOutputs/grep.output
-	@python3 timeout.py 5s $(DETTRACE) grep "bcd" grepTestFile > ActualOutputs/grep.output
+	@python3 timeout.py $(TEST_TIMEOUT) $(DETTRACE) grep "bcd" grepTestFile > ActualOutputs/grep.output
 	@$(DIFF_CMD) ActualOutputs/grep.output ExpectedOutputs/grep.output
 
 sed.ok:
 	@echo "   Testing sed..."
 	@rm -rf ActualOutputs/sed.output
-	@python3 timeout.py 5s $(DETTRACE) echo "hello" > ActualOutputs/sed.output
-	@python3 timeout.py 5s $(DETTRACE) echo "world" >> ActualOutputs/sed.output
-	@python3 timeout.py 5s $(DETTRACE) 'sed -i "1 a big" ActualOutputs/sed.output'
-	@python3 timeout.py 5s $(DETTRACE) 'sed -i "s/world/sun/" ActualOutputs/sed.output'
-	@python3 timeout.py 5s $(DETTRACE) 'sed -i "2 d" ActualOutputs/sed.output'
-	@python3 timeout.py 5s $(DETTRACE) 'sed -i "2 a moon" ActualOutputs/sed.output'
-	@python3 timeout.py 5s $(DETTRACE) 'sed -i "/moon/ i hello" ActualOutputs/sed.output'
+	@python3 timeout.py $(TEST_TIMEOUT) $(DETTRACE) echo "hello" > ActualOutputs/sed.output
+	@python3 timeout.py $(TEST_TIMEOUT) $(DETTRACE) echo "world" >> ActualOutputs/sed.output
+	@python3 timeout.py $(TEST_TIMEOUT) $(DETTRACE) 'sed -i "1 a big" ActualOutputs/sed.output'
+	@python3 timeout.py $(TEST_TIMEOUT) $(DETTRACE) 'sed -i "s/world/sun/" ActualOutputs/sed.output'
+	@python3 timeout.py $(TEST_TIMEOUT) $(DETTRACE) 'sed -i "2 d" ActualOutputs/sed.output'
+	@python3 timeout.py $(TEST_TIMEOUT) $(DETTRACE) 'sed -i "2 a moon" ActualOutputs/sed.output'
+	@python3 timeout.py $(TEST_TIMEOUT) $(DETTRACE) 'sed -i "/moon/ i hello" ActualOutputs/sed.output'
 	@$(DIFF_CMD) ActualOutputs/sed.output ExpectedOutputs/sed.output
 
 more.ok:
 	@echo "   Testing more..."
 	@rm -rf moreTestFile
-	@python3 timeout.py 5s $(DETTRACE) echo "line 0" >> moreTestFile
-	@python3 timeout.py 5s $(DETTRACE) echo "line 1" >> moreTestFile
-	@python3 timeout.py 5s $(DETTRACE) echo "line 2" >> moreTestFile
-	@python3 timeout.py 5s $(DETTRACE) echo "line 3" >> moreTestFile
-	@python3 timeout.py 5s $(DETTRACE) echo "line 4" >> moreTestFile
-	@python3 timeout.py 5s $(DETTRACE) echo "line 5" >> moreTestFile
-	@python3 timeout.py 5s $(DETTRACE) echo "line 6" >> moreTestFile
-	@python3 timeout.py 5s $(DETTRACE) echo "line 7" >> moreTestFile
-	@python3 timeout.py 5s $(DETTRACE) echo "line 8" >> moreTestFile
-	@python3 timeout.py 5s $(DETTRACE) echo "line 9" >> moreTestFile
-	@python3 timeout.py 5s $(DETTRACE) more moreTestFile < /dev/null > ActualOutputs/more.output
+	@python3 timeout.py $(TEST_TIMEOUT) $(DETTRACE) echo "line 0" >> moreTestFile
+	@python3 timeout.py $(TEST_TIMEOUT) $(DETTRACE) echo "line 1" >> moreTestFile
+	@python3 timeout.py $(TEST_TIMEOUT) $(DETTRACE) echo "line 2" >> moreTestFile
+	@python3 timeout.py $(TEST_TIMEOUT) $(DETTRACE) echo "line 3" >> moreTestFile
+	@python3 timeout.py $(TEST_TIMEOUT) $(DETTRACE) echo "line 4" >> moreTestFile
+	@python3 timeout.py $(TEST_TIMEOUT) $(DETTRACE) echo "line 5" >> moreTestFile
+	@python3 timeout.py $(TEST_TIMEOUT) $(DETTRACE) echo "line 6" >> moreTestFile
+	@python3 timeout.py $(TEST_TIMEOUT) $(DETTRACE) echo "line 7" >> moreTestFile
+	@python3 timeout.py $(TEST_TIMEOUT) $(DETTRACE) echo "line 8" >> moreTestFile
+	@python3 timeout.py $(TEST_TIMEOUT) $(DETTRACE) echo "line 9" >> moreTestFile
+	@python3 timeout.py $(TEST_TIMEOUT) $(DETTRACE) more moreTestFile < /dev/null > ActualOutputs/more.output
 	@more moreTestFile < /dev/null > ExpectedOutputs/more.output
 	@$(DIFF_CMD) ActualOutputs/more.output ExpectedOutputs/more.output
 
 less.ok:
 	@echo "   Testing less..."
 	@rm -rf lessTestFile
-	@python3 timeout.py 5s $(DETTRACE) echo "line 0" >> lessTestFile
-	@python3 timeout.py 5s $(DETTRACE) echo "line 1" >> lessTestFile
-	@python3 timeout.py 5s $(DETTRACE) echo "line 2" >> lessTestFile
-	@python3 timeout.py 5s $(DETTRACE) echo "line 3" >> lessTestFile
-	@python3 timeout.py 5s $(DETTRACE) echo "line 4" >> lessTestFile
-	@python3 timeout.py 5s $(DETTRACE) echo "line 5" >> lessTestFile
-	@python3 timeout.py 5s $(DETTRACE) echo "line 6" >> lessTestFile
-	@python3 timeout.py 5s $(DETTRACE) echo "line 7" >> lessTestFile
-	@python3 timeout.py 5s $(DETTRACE) echo "line 8" >> lessTestFile
-	@python3 timeout.py 5s $(DETTRACE) echo "line 9" >> lessTestFile
-	@python3 timeout.py 5s $(DETTRACE) less lessTestFile > ActualOutputs/less.output
+	@python3 timeout.py $(TEST_TIMEOUT) $(DETTRACE) echo "line 0" >> lessTestFile
+	@python3 timeout.py $(TEST_TIMEOUT) $(DETTRACE) echo "line 1" >> lessTestFile
+	@python3 timeout.py $(TEST_TIMEOUT) $(DETTRACE) echo "line 2" >> lessTestFile
+	@python3 timeout.py $(TEST_TIMEOUT) $(DETTRACE) echo "line 3" >> lessTestFile
+	@python3 timeout.py $(TEST_TIMEOUT) $(DETTRACE) echo "line 4" >> lessTestFile
+	@python3 timeout.py $(TEST_TIMEOUT) $(DETTRACE) echo "line 5" >> lessTestFile
+	@python3 timeout.py $(TEST_TIMEOUT) $(DETTRACE) echo "line 6" >> lessTestFile
+	@python3 timeout.py $(TEST_TIMEOUT) $(DETTRACE) echo "line 7" >> lessTestFile
+	@python3 timeout.py $(TEST_TIMEOUT) $(DETTRACE) echo "line 8" >> lessTestFile
+	@python3 timeout.py $(TEST_TIMEOUT) $(DETTRACE) echo "line 9" >> lessTestFile
+	@python3 timeout.py $(TEST_TIMEOUT) $(DETTRACE) less lessTestFile > ActualOutputs/less.output
 	@$(DIFF_CMD) ActualOutputs/less.output ExpectedOutputs/less.output
 
 ls.ok:
 	@echo "   Testing ls..."
 	@rm -rf lsTestDirectory
-	@python3 timeout.py 5s $(DETTRACE) mkdir lsTestDirectory
-	@python3 timeout.py 5s $(DETTRACE) mkdir lsTestDirectory/foo
-	@python3 timeout.py 5s $(DETTRACE) touch lsTestDirectory/hello
-	@python3 timeout.py 5s $(DETTRACE) mkdir lsTestDirectory/foo/bar
-	@python3 timeout.py 5s $(DETTRACE) touch lsTestDirectory/foo/world
-	@python3 timeout.py 5s $(DETTRACE) ls -R lsTestDirectory > ActualOutputs/ls.output
+	@python3 timeout.py $(TEST_TIMEOUT) $(DETTRACE) mkdir lsTestDirectory
+	@python3 timeout.py $(TEST_TIMEOUT) $(DETTRACE) mkdir lsTestDirectory/foo
+	@python3 timeout.py $(TEST_TIMEOUT) $(DETTRACE) touch lsTestDirectory/hello
+	@python3 timeout.py $(TEST_TIMEOUT) $(DETTRACE) mkdir lsTestDirectory/foo/bar
+	@python3 timeout.py $(TEST_TIMEOUT) $(DETTRACE) touch lsTestDirectory/foo/world
+	@python3 timeout.py $(TEST_TIMEOUT) $(DETTRACE) ls -R lsTestDirectory > ActualOutputs/ls.output
 	@$(DIFF_CMD) ActualOutputs/ls.output ExpectedOutputs/ls.output
 
 sh.ok:
 	@echo "   Testing sh..."
 	@rm -rf shTestFile
 	@echo ps \-p '$$$$' \| tail \-1 \| awk \'\{ print '$$'4 \}\' > shTestFile
-	@python3 timeout.py 5s $(DETTRACE) sh shTestFile > ActualOutputs/sh.output
+	@python3 timeout.py $(TEST_TIMEOUT) $(DETTRACE) sh shTestFile > ActualOutputs/sh.output
 	@$(DIFF_CMD) ActualOutputs/sh.output ExpectedOutputs/sh.output
 
 cat.ok:
@@ -283,7 +285,7 @@ cat.ok:
 	@echo "Fourth" >> catTestFile
 	@echo "Fifth" >> catTestFile
 	@echo "Sixth" >> catTestFile
-	@python3 timeout.py 5s $(DETTRACE) cat -ne catTestFile > ActualOutputs/cat.output
+	@python3 timeout.py $(TEST_TIMEOUT) $(DETTRACE) cat -ne catTestFile > ActualOutputs/cat.output
 	@$(DIFF_CMD) ActualOutputs/cat.output ExpectedOutputs/cat.output
 
 # Other DetTrace tests, with non-trivial invocation or cleanup
@@ -305,7 +307,7 @@ fuse-%.ok: fuse-%.bin partialfs
 	@echo "   Testing fuse variant: $(basename $<)..."
 	@truncate --size=0 $(FUSE_FILE)
 	@./partialfs -o direct_io $(FUSE_FILE) # launch FUSE filesystem
-	@python3 timeout.py 5s $(DETTRACE) ./$< $(FUSE_FILE) > ActualOutputs/$(basename $<).output
+	@python3 timeout.py $(TEST_TIMEOUT) $(DETTRACE) ./$< $(FUSE_FILE) > ActualOutputs/$(basename $<).output
 	@fusermount -q -u $(FUSE_FILE) # tear down FUSE filesystem
 	@$(DIFF_CMD) ActualOutputs/$(basename $<).output ExpectedOutputs/$(basename $<).output
 
@@ -362,12 +364,12 @@ alarm-ignore.ok: alarm-ignore.bin
 	@python3 timeout.py 2s $(DETTRACE) ./$< || [ $$? -eq 247 ]
 
 kill.ok: kill.bin
-	@for s in $$(seq 1 64); do echo "   Testing $(basename $<) $$s..." && (python3 timeout.py 5s $(DETTRACE) ./$< $$s 2> ActualOutputs/$(basename $<)-$$s.output || true) && $(DIFF_CMD) ActualOutputs/$(basename $<)-$$s.output ExpectedOutputs/$(basename $<).output ; done
+	@for s in $$(seq 1 64); do echo "   Testing $(basename $<) $$s..." && (python3 timeout.py $(TEST_TIMEOUT) $(DETTRACE) ./$< $$s 2> ActualOutputs/$(basename $<)-$$s.output || true) && $(DIFF_CMD) ActualOutputs/$(basename $<)-$$s.output ExpectedOutputs/$(basename $<).output ; done
 
 # NB: we allow SIGABRT to be sent via tgkill, to support abort() calls
 tgkill.ok: tgkill.bin
-	@for s in 1 2 3 4 5 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52 53 54 55 56 57 58 59 60 61 62 63 64; do echo "   Testing $(basename $<) $$s..." && (python3 timeout.py 5s $(DETTRACE) ./$< $$s 2> ActualOutputs/$(basename $<)-$$s.output || true) && $(DIFF_CMD) ActualOutputs/$(basename $<)-$$s.output ExpectedOutputs/$(basename $<).output ; done
-#	@for s in 1 2; do echo "   Testing $(basename $<) $$s..." && (python3 timeout.py 5s $(DETTRACE) ./$< $$s 2> ActualOutputs/$(basename $<)-$$s.output || true) && $(DIFF_CMD) ActualOutputs/$(basename $<)-$$s.output ExpectedOutputs/$(basename $<).output ; done
+	@for s in 1 2 3 4 5 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52 53 54 55 56 57 58 59 60 61 62 63 64; do echo "   Testing $(basename $<) $$s..." && (python3 timeout.py $(TEST_TIMEOUT) $(DETTRACE) ./$< $$s 2> ActualOutputs/$(basename $<)-$$s.output || true) && $(DIFF_CMD) ActualOutputs/$(basename $<)-$$s.output ExpectedOutputs/$(basename $<).output ; done
+#	@for s in 1 2; do echo "   Testing $(basename $<) $$s..." && (python3 timeout.py $(TEST_TIMEOUT) $(DETTRACE) ./$< $$s 2> ActualOutputs/$(basename $<)-$$s.output || true) && $(DIFF_CMD) ActualOutputs/$(basename $<)-$$s.output ExpectedOutputs/$(basename $<).output ; done
 
 exec-mkstemp.ok: exec-mkstemp.bin
 	@echo "   Testing $(basename $<)..."
