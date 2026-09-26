@@ -455,6 +455,16 @@ static const unsigned char __kernel_getcpu[] = {
   , 0x07, 0xfe                                   // br %r14
   , 0x07, 0x07, 0x07, 0x07, 0x07, 0x07 };        // nopr (pad to 40 bytes)
 
+// Where the symbol is too small for the code above -- the wrappers of
+// the vDSO up to Linux 6.4 are 28 bytes, __kernel_getcpu among them --
+// let the intercepted getcpu syscall answer instead (seccomp.cpp makes
+// it answer for the rseq area, so it is always intercepted).
+static const unsigned char __kernel_getcpu_syscall[] = {
+    0xa7, 0x19, (unsigned char)(SYS_getcpu >> 8), (unsigned char)SYS_getcpu
+                                                 // lghi %r1, SYS_getcpu
+  , 0x0a, 0x00                                   // svc 0
+  , 0x07, 0xfe };                                // br %r14
+
 // See the x86_64 __vdso_getrandom above: force the fallback to the
 // intercepted getrandom syscall.
 static const unsigned char __kernel_getrandom[] = {
@@ -681,8 +691,12 @@ int proc_get_vdso_symbols(
     ElfW(Sym)* sym =
         (ElfW(Sym)*)(base + dynsym->sh_offset + i * dynsym->sh_entsize);
     const char* name = (const char*)((unsigned long)strtab + sym->st_name);
+    // The names below are only ever functions, so an untyped symbol is
+    // fine: the ppc64 vDSO before Linux 6.6 declared its entry points
+    // with .globl but without .type, and their symbols are STT_NOTYPE.
     if (ELFW(ST_BIND)(sym->st_info) == STB_GLOBAL &&
-        ELFW(ST_TYPE)(sym->st_info) == STT_FUNC) {
+        (ELFW(ST_TYPE)(sym->st_info) == STT_FUNC ||
+         ELFW(ST_TYPE)(sym->st_info) == STT_NOTYPE)) {
       VERIFY(sym->st_shndx < ehdr->e_shnum);
       unsigned long alignment = sym->st_shndx < ehdr->e_shnum
                                     ? shbase[sym->st_shndx].sh_addralign
@@ -914,8 +928,13 @@ int proc_get_vdso_symbols(
         vdso[res].code = (const unsigned char*)__kernel_gettimeofday;
       } else if (strcmp("__kernel_getcpu", name) == 0) {
         vdso[res].func = VDSO_getcpu;
-        vdso[res].code_size = sizeof(__kernel_getcpu);
-        vdso[res].code = (const unsigned char*)__kernel_getcpu;
+        if (sym->st_size >= sizeof(__kernel_getcpu)) {
+          vdso[res].code_size = sizeof(__kernel_getcpu);
+          vdso[res].code = (const unsigned char*)__kernel_getcpu;
+        } else {
+          vdso[res].code_size = sizeof(__kernel_getcpu_syscall);
+          vdso[res].code = (const unsigned char*)__kernel_getcpu_syscall;
+        }
       } else if (strcmp("__kernel_clock_getres", name) == 0) {
         vdso[res].func = VDSO_clock_getres;
         vdso[res].code_size = sizeof(__kernel_clock_getres);
