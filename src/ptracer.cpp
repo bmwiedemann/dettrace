@@ -447,6 +447,46 @@ void ptracer::rewindToSyscall() {
   writeRegisters(traceePid, regs);
 #else
   writeIp(regsGetIp(regs) - syscallInsnLength());
+#if defined(__powerpc__)
+  pendingReplays[traceePid] = regs;
+#endif
+#endif
+}
+
+bool ptracer::hasPendingReplay(pid_t pid) const {
+#if defined(__powerpc__)
+  return pendingReplays.count(pid) != 0;
+#else
+  (void)pid;
+  return false;
+#endif
+}
+
+bool ptracer::recoverLostReplay() {
+#if defined(__powerpc__)
+  auto it = pendingReplays.find(traceePid);
+  if (it == pendingReplays.end()) {
+    return false;
+  }
+  const struct user_regs_struct replay = it->second;
+  pendingReplays.erase(it);
+  // Only the stop of the replayed instruction itself, and only when the
+  // kernel lost its number; a vectored scv returns through a path that
+  // keeps r0 and r4..r8, as does the sc path after a signal.
+  if (REG_SYSNUM(regs) != __NR_restart_syscall ||
+      REG_SYSNUM(replay) == __NR_restart_syscall ||
+      regsGetIp(regs) != regsGetIp(replay) + syscallInsnSize) {
+    return false;
+  }
+  REG_SYSNUM(regs) = REG_SYSNUM(replay);
+  for (int i = 3; i <= 8; i++) {
+    regs.gpr[i] = replay.gpr[i];
+  }
+  REG_ORIG_ARG1(regs) = REG_ARG1(replay);
+  writeRegisters(traceePid, regs);
+  return true;
+#else
+  return false;
 #endif
 }
 

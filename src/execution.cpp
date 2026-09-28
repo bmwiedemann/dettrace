@@ -967,6 +967,21 @@ bool execution::handleSeccomp(const pid_t traceesPid) {
   long syscallNum;
   ptracer::doPtrace(PTRACE_GETEVENTMSG, traceesPid, nullptr, &syscallNum);
 
+  // A replay the kernel turned into restart_syscall, see
+  // ptracer::recoverLostReplay. restart_syscall has no rule, so this
+  // stop comes with INT16_MAX; after the repair the kernel runs the
+  // replayed call, and the rest of this function sees it in the registers.
+  if (tracer.hasPendingReplay(traceesPid)) {
+    tracer.updateState(traceesPid);
+    if (tracer.recoverLostReplay()) {
+      log.writeToLog(
+          Importance::info,
+          "Replay came back as restart_syscall, restored system call " +
+              to_string(tracer.getSystemCallNumber()) + "\n");
+      syscallNum = tracer.getSystemCallNumber();
+    }
+  }
+
   // TODO This might be totally unnecessary
   // INT16_MAX is sent by seccomp by convention as for system calls with no
   // rules.

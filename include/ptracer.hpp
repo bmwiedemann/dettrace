@@ -24,6 +24,7 @@
 #include <memory>
 #include <set>
 #include <tuple>
+#include <unordered_map>
 
 #include "traceePtr.hpp"
 #include "util.hpp"
@@ -726,6 +727,30 @@ public:
    */
   void rewindToSyscall();
 
+  /**
+   * Whether this tracee was wound back for a replay by rewindToSyscall
+   * and has not stopped at a system call since, see recoverLostReplay.
+   */
+  bool hasPendingReplay(pid_t pid) const;
+
+  /**
+   * Called at a seccomp stop of the current tracee after updateState.
+   * With the generic entry code (powerpc since Linux 7.2, and kernels
+   * carrying that series such as Leap 16.1's 6.12), a system call made
+   * with sc leaves the kernel through the fast path whenever no signal
+   * is handled on the way out. That path takes r3, cr and the pc from
+   * what a tracer wrote at the syscall-exit stop, but zeroes r0 and
+   * r4..r12: syscall_exit_prepare only asks for all registers to be
+   * restored for _TIF_SYSCALL_DOTRACE, and under the generic entry code
+   * tracing sets syscall_work bits rather than those thread flags. A
+   * replay therefore executes sc again with r0 = 0, which is
+   * restart_syscall, and without its arguments. Put the number and the
+   * arguments of the replayed call back now: at an entry stop the kernel
+   * does take them from the registers. Returns whether it did, and
+   * forgets the pending replay either way.
+   */
+  bool recoverLostReplay();
+
 #if defined(__x86_64__) || defined(__i386__)
   /**
    * Write  value to rax (eax) register. Use setReturnRegister() to set a
@@ -967,6 +992,13 @@ private:
    */
   bool atSyscallEntry = false;
   bool arg1RewrittenAtEntry = false;
+#endif
+#if defined(__powerpc__)
+  /**
+   * Registers of each tracee wound back by rewindToSyscall, with the pc
+   * on the system call instruction, until its next seccomp stop.
+   */
+  std::unordered_map<pid_t, struct user_regs_struct> pendingReplays;
 #endif
 #if defined(__s390x__)
   /**
