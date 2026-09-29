@@ -1,4 +1,6 @@
 #include <getopt.h>
+#include <glob.h>
+#include <limits.h>
 #include <string.h>
 #include <sys/mount.h>
 #include <sys/types.h>
@@ -12,6 +14,7 @@
 
 #include <cstdlib>
 #include <iostream>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -305,6 +308,43 @@ static int run_main(programArgs& args) {
     // run at all.
     if (sysfsCpuOverridden) {
       addOverride("/sys/devices/system/cpu", "/sys/devices/system/cpu", true);
+    }
+    // The dynamic loader looks for libraries built for the CPU's
+    // microarchitecture level in the glibc-hwcaps subdirectories of the
+    // system library directories, and only for the levels the CPU has:
+    // three directories on a current x86_64 machine, none on qemu64. Where
+    // the CPUID instruction cannot be masked -- a virtual machine without
+    // CPUID faulting, as build services use -- that makes every guest take
+    // the host's library variants, and every inode number we hand out
+    // after the first program start depends on the CPU. Show an empty
+    // directory instead, so that the baseline libraries are loaded
+    // whatever the CPU. Only where there is one, as a missing target only
+    // earns a warning.
+    // Not with --already-in-chroot, where our source would resolve to the
+    // chroot's own path, and only with the source installed: a missing one
+    // would only earn a warning per directory.
+    if (procOverridesMounted && !args.alreadyInChroot &&
+        overrideSourceExists(args.pathToChroot + "/glibc-hwcaps")) {
+      const char* patterns[] = {
+          "/lib*/glibc-hwcaps", "/usr/lib*/glibc-hwcaps",
+          "/lib/*-linux-*/glibc-hwcaps", "/usr/lib/*-linux-*/glibc-hwcaps"};
+      std::set<string> hwcapsDirs;
+      for (const char* pattern : patterns) {
+        glob_t found;
+        if (glob(pattern, GLOB_ONLYDIR, nullptr, &found) == 0) {
+          for (size_t i = 0; i < found.gl_pathc; i++) {
+            char real[PATH_MAX];
+            // /lib64 is a link to /usr/lib64 on merged-/usr systems
+            if (realpath(found.gl_pathv[i], real) != nullptr) {
+              hwcapsDirs.insert(real);
+            }
+          }
+        }
+        globfree(&found);
+      }
+      for (const string& dir : hwcapsDirs) {
+        addOverride("/glibc-hwcaps", dir.c_str(), true);
+      }
     }
   }
 
@@ -625,8 +665,9 @@ programArgs parseProgramArguments(int argc, char* argv[]) {
       "which nproc, sched_getaffinity, sched_getcpu, /proc/cpuinfo, /proc/stat and "
       "/sys/devices/system/cpu all agree; a /proc/cpuinfo matching the CPUID values "
       "dettrace reports; a kernel identity in /proc/version and /proc/sys/kernel/* "
-      "matching uname(2); and fixed /proc/{meminfo,uptime,loadavg,filesystems} and "
-      "/proc/sys/kernel/random/boot_id.",
+      "matching uname(2); fixed /proc/{meminfo,uptime,loadavg,filesystems} and "
+      "/proc/sys/kernel/random/boot_id; and empty glibc-hwcaps directories, so "
+      "that the dynamic loader picks the baseline libraries whatever the CPU.",
       cxxopts::value<bool>()->default_value("false"))
     ( "aslr",
       "Enable Address Space Layout Randomization. ASLR is disabled by default "
