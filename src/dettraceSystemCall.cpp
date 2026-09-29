@@ -2436,9 +2436,10 @@ void rt_sigactionSystemCall::handleDetPost(
     globalState& gs, state& s, ptracer& t, scheduler& sched) {
   gs.log.writeToLog(Importance::info, "rt_sigaction post-hook\n");
   if (0 == t.getReturnValue()) {
-    // signal handler installation was successful
-    s.currentSignalHandlers.get()->insert(
-        {s.requestedSignalToHandle, s.requestedSignalHandler});
+    // signal handler installation was successful; it replaces whatever
+    // was installed before, which insert() would have kept
+    (*s.currentSignalHandlers.get())[s.requestedSignalToHandle] =
+        s.requestedSignalHandler;
 
     gs.log.writeToLog(
         Importance::info,

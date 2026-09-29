@@ -23,6 +23,8 @@
 
 #include <sys/time.h>
 #include <errno.h>
+#include <signal.h>
+#include <time.h>
 #include <sys/mman.h>
 #include <sys/sysinfo.h>
 #include <sys/resource.h>
@@ -374,4 +376,20 @@ TEST_CASE("mincore", "mincore"){
   REQUIRE(mincore(p + 1, pageSize, vec) == -1);
   REQUIRE(errno == EINVAL);
   REQUIRE(vec[0] == 0xaa);
+}
+
+static volatile sig_atomic_t alarms;
+static void countAlarm(int) { alarms++; }
+
+TEST_CASE("a new signal handler replaces the old one", "signals"){
+  REQUIRE(signal(SIGALRM, SIG_DFL) != SIG_ERR);
+  REQUIRE(signal(SIGALRM, countAlarm) != SIG_ERR);
+  alarms = 0;
+  // Armed timers fire right away; with SIG_DFL still on record this would
+  // end the test run instead.
+  struct itimerval armed = {};
+  armed.it_value.tv_sec = 5;
+  REQUIRE(setitimer(ITIMER_REAL, &armed, nullptr) == 0);
+  REQUIRE(alarms == 1);
+  REQUIRE(signal(SIGALRM, SIG_DFL) != SIG_ERR);
 }
