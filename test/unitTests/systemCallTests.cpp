@@ -431,8 +431,10 @@ TEST_CASE("disarming a timer sends no signal", "timers"){
   errno = 0;
   REQUIRE(syscall(SYS_timer_settime, timer, 0, (void*)8, nullptr) == -1);
   REQUIRE(errno == EFAULT);
+  // The system call itself: glibc converts the value between time ABIs on
+  // the 32-bit architectures, which would read the bad pointer here.
   errno = 0;
-  REQUIRE(setitimer(ITIMER_REAL, (const struct itimerval*)8, nullptr) == -1);
+  REQUIRE(syscall(SYS_setitimer, ITIMER_REAL, (void*)8, nullptr) == -1);
   REQUIRE(errno == EFAULT);
   REQUIRE(alarms == 0);
   REQUIRE(timer_delete(timer) == 0);
@@ -471,12 +473,15 @@ static void fillPipeFromFile(bool useSplice) {
   }
   close(p[0]);
 
-  off_t off = 0;
+  // splice takes a 64-bit offset everywhere, sendfile an off_t, which is
+  // 32 bits wide on the 32-bit architectures.
+  loff_t spliceOff = 0;
+  off_t sendfileOff = 0;
   long sent = 0;
   while (sent < written) {
     ssize_t r = useSplice
-                    ? splice(fd, &off, p[1], nullptr, written - sent, 0)
-                    : sendfile(p[1], fd, &off, written - sent);
+                    ? splice(fd, &spliceOff, p[1], nullptr, written - sent, 0)
+                    : sendfile(p[1], fd, &sendfileOff, written - sent);
     if (r <= 0) {
       break;
     }
