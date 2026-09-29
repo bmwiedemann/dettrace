@@ -837,6 +837,40 @@ public:
 // =======================================================================================
 /**
  *
+ * ssize_t splice(int fd_in, off64_t *off_in, int fd_out, off64_t *off_out,
+ *                size_t len, unsigned int flags);
+ * ssize_t tee(int fd_in, int fd_out, size_t len, unsigned int flags);
+ * ssize_t vmsplice(int fd, const struct iovec *iov, size_t nr_segs,
+ *                  unsigned int flags);
+ * ssize_t sendfile(int out_fd, int in_fd, off_t *offset, size_t count);
+ *
+ * Move data into or out of a pipe without going through read and write.
+ * The data is as deterministic as for those, but we make every pipe
+ * non-blocking, so a call that would wait for its pipe fails with EAGAIN
+ * instead - coreutils' cat copies into a pipe with splice and gave up with
+ * "write error: Resource temporarily unavailable". Unless the tracee asked
+ * not to block (SPLICE_F_NONBLOCK, or O_NONBLOCK on one of the descriptors),
+ * treat that like a blocked write: preempt and replay later.
+ *
+ * Known limitation, shared with write: we only know of an O_NONBLOCK the
+ * tracee set through our fdStatus, which misses descriptors made by
+ * socketpair or eventfd2 with a NONBLOCK flag, descriptors that outlived an
+ * execve, and a later F_SETFL that clears it. An EAGAIN such a tracee
+ * expects is replayed until the call can proceed.
+ */
+class spliceSystemCall {
+public:
+  static bool handleDetPre(
+      globalState& gs, state& s, ptracer& t, scheduler& sched);
+  static void handleDetPost(
+      globalState& gs, state& s, ptracer& t, scheduler& sched);
+
+  const int syscallNumber = SYS_splice;
+  const string syscallName = "splice";
+};
+// =======================================================================================
+/**
+ *
  * int mincore(void* addr, size_t length, unsigned char* vec);
  *
  * mincore() reports which pages of a mapping are resident in core.  Residency

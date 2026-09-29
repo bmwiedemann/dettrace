@@ -1592,6 +1592,56 @@ bool clock_nanosleepSystemCall::handleDetPre(
   return false;
 }
 // =======================================================================================
+bool spliceSystemCall::handleDetPre(
+    globalState& gs, state& s, ptracer& t, scheduler& sched) {
+  return true;
+}
+
+void spliceSystemCall::handleDetPost(
+    globalState& gs, state& s, ptracer& t, scheduler& sched) {
+  if ((int)t.getReturnValue() != -EAGAIN) {
+    return;
+  }
+
+  // The descriptors involved and the flags, where the call takes any.
+  int fds[2] = {-1, -1};
+  unsigned int flags = 0;
+  switch ((long)t.getSystemCallNumber()) {
+  case SYS_splice:
+    fds[0] = t.arg1();
+    fds[1] = t.arg3();
+    flags = t.arg6();
+    break;
+  case SYS_tee:
+    fds[0] = t.arg1();
+    fds[1] = t.arg2();
+    flags = t.arg4();
+    break;
+  case SYS_vmsplice:
+    fds[0] = t.arg1();
+    flags = t.arg4();
+    break;
+  default: // sendfile, sendfile64
+    fds[0] = t.arg1();
+    fds[1] = t.arg2();
+    break;
+  }
+
+  if ((flags & SPLICE_F_NONBLOCK) != 0) {
+    return;
+  }
+  for (int fd : fds) {
+    if (fd >= 0 && s.countFdStatus(fd) != 0 &&
+        s.getFdStatus(fd) == descriptorType::nonBlocking) {
+      return;
+    }
+  }
+
+  if (replaySyscallIfBlocked(gs, s, t, sched, EAGAIN)) {
+    gs.writeRetryEvents++;
+  }
+}
+// =======================================================================================
 bool mincoreSystemCall::handleDetPre(
     globalState& gs, state& s, ptracer& t, scheduler& sched) {
   return true;

@@ -1472,6 +1472,15 @@ bool execution::callPreHook(
   case SYS_clock_nanosleep:
     return clock_nanosleepSystemCall::handleDetPre(gs, s, t, sched);
 
+  case SYS_splice:
+  case SYS_tee:
+  case SYS_vmsplice:
+  case SYS_sendfile:
+#ifdef SYS_sendfile64
+  case SYS_sendfile64:
+#endif
+    return spliceSystemCall::handleDetPre(gs, s, t, sched);
+
   case SYS_mincore:
     return mincoreSystemCall::handleDetPre(gs, s, t, sched);
 
@@ -1875,6 +1884,15 @@ void execution::callPostHook(
 
   case SYS_nanosleep:
     return nanosleepSystemCall::handleDetPost(gs, s, t, sched);
+
+  case SYS_splice:
+  case SYS_tee:
+  case SYS_vmsplice:
+  case SYS_sendfile:
+#ifdef SYS_sendfile64
+  case SYS_sendfile64:
+#endif
+    return spliceSystemCall::handleDetPost(gs, s, t, sched);
 
   case SYS_mincore:
     return mincoreSystemCall::handleDetPost(gs, s, t, sched);

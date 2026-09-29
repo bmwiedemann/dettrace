@@ -25,6 +25,7 @@
 #include <errno.h>
 #include <signal.h>
 #include <time.h>
+#include <sys/sendfile.h>
 #include <sys/mman.h>
 #include <sys/sysinfo.h>
 #include <sys/resource.h>
@@ -436,4 +437,66 @@ TEST_CASE("disarming a timer sends no signal", "timers"){
   REQUIRE(alarms == 0);
   REQUIRE(timer_delete(timer) == 0);
   REQUIRE(signal(SIGALRM, SIG_DFL) != SIG_ERR);
+}
+
+// Fills a pipe through splice or sendfile while a child drains it; every
+// pipe is non-blocking under dettrace, so a call that finds the pipe full
+// must be retried rather than fail with EAGAIN. Nothing is asserted until
+// the pipe is closed and the child reaped: a failure in between would leave
+// the child blocked on the pipe and the run waiting for it forever.
+static void fillPipeFromFile(bool useSplice) {
+  const long size = 1 << 20;
+  const char* name = "spliceTestFile.txt";
+  int fd = open(name, O_CREAT | O_TRUNC | O_RDWR, 0644);
+  std::remove(name); // the open descriptor keeps it until the end
+  REQUIRE(fd >= 0);
+  char block[4096];
+  memset(block, 'x', sizeof(block));
+  long written = 0;
+  while (written < size && write(fd, block, sizeof(block)) == sizeof(block)) {
+    written += sizeof(block);
+  }
+
+  int p[2];
+  REQUIRE(pipe(p) == 0);
+  pid_t child = fork();
+  if (child == 0) {
+    close(p[1]);
+    long got = 0;
+    ssize_t r;
+    while ((r = read(p[0], block, sizeof(block))) > 0) {
+      got += r;
+    }
+    _exit(got == size ? 0 : 1);
+  }
+  close(p[0]);
+
+  off_t off = 0;
+  long sent = 0;
+  while (sent < written) {
+    ssize_t r = useSplice
+                    ? splice(fd, &off, p[1], nullptr, written - sent, 0)
+                    : sendfile(p[1], fd, &off, written - sent);
+    if (r <= 0) {
+      break;
+    }
+    sent += r;
+  }
+  close(p[1]);
+  close(fd);
+
+  int status;
+  REQUIRE(waitpid(child, &status, 0) == child);
+  REQUIRE(written == size);
+  REQUIRE(sent == size);
+  REQUIRE(WIFEXITED(status));
+  REQUIRE(WEXITSTATUS(status) == 0);
+}
+
+TEST_CASE("splice into a full pipe waits", "splice"){
+  fillPipeFromFile(true);
+}
+
+TEST_CASE("sendfile into a full pipe waits", "sendfile"){
+  fillPipeFromFile(false);
 }

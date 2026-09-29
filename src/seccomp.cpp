@@ -50,10 +50,15 @@ void seccomp::loadRules(bool debug, bool convertUids) {
   // up our bind mounts wrong and might need to allow for recursive mounting.
   // But it will be obvious.
   noIntercept(SYS_bind);
-  noIntercept(SYS_splice);
+  // We make every pipe non-blocking; these would wait for one to have room
+  // or data and have to be replayed then, like read and write.
+  intercept(SYS_splice);
+  intercept(SYS_tee);
+  intercept(SYS_vmsplice);
+  intercept(SYS_sendfile);
 #ifdef SYS_copy_file_range
-  // Only works on regular files, so the result is deterministic like
-  // splice above. Used by coreutils >= 9.0 cat.
+  // Only works on regular files, so the result is deterministic and it
+  // never waits on a pipe. Used by coreutils >= 9.0 cat.
   noIntercept(SYS_copy_file_range);
 #endif
   // glibc implements dup2() with dup3() where the former does not exist
@@ -457,7 +462,7 @@ void seccomp::loadRules(bool debug, bool convertUids) {
   intercept(SYS_ugetrlimit);
 #endif
 #ifdef SYS_sendfile64
-  noIntercept(SYS_sendfile64);
+  intercept(SYS_sendfile64);
   noIntercept(SYS_truncate64);
   noIntercept(SYS_ftruncate64);
 #endif
