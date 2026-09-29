@@ -776,8 +776,9 @@ Linux acghaswellcat16 4.15.0-43-generic #46-Ubuntu SMP Thu Dec 6 14:45:28 UTC
         "fileExisted flag out of sync. It should have been set to false.");
   }
 
-  // We only case we care about newly created files, later we might want to
-  // update the mtime for other modification events like O_TRUNC or O_APPEND.
+  // Newly created files get a modification time of their own, and so do
+  // files truncated for writing (see handlePostOpens); O_APPEND and plain
+  // writes still leave it alone.
   if ((flags & O_CREAT) == O_CREAT) {
     gs.log.writeToLog(Importance::info, "Tracee included O_CREATE.\n");
     s.fileExisted = tracee_file_exists(path, s.traceePid, gs.log, dirfd);
@@ -788,6 +789,14 @@ Linux acghaswellcat16 4.15.0-43-generic #46-Ubuntu SMP Thu Dec 6 14:45:28 UTC
   return true;
 }
 // =======================================================================================
+// Whether descriptor fd of the tracee refers to a regular file.
+static bool isRegularFileFd(pid_t traceePid, int fd) {
+  string procPath =
+      "/proc/" + to_string(traceePid) + "/fd/" + to_string(fd);
+  struct stat statbuf = {};
+  return stat(procPath.c_str(), &statbuf) == 0 && S_ISREG(statbuf.st_mode);
+}
+
 void handlePostOpens(globalState& gs, state& s, ptracer& t, int flags) {
   gs.log.writeToLog(Importance::info, "Flags: 0x%x\n", flags);
   if (t.getReturnValue() >= 0 &&
@@ -801,6 +810,20 @@ void handlePostOpens(globalState& gs, state& s, ptracer& t, int flags) {
     auto inode = readInodeFor(gs.log, s.traceePid, t.getReturnValue());
     gs.mtimeMap[inode] = s.getLogicalTime();
     gs.inodeMap.addRealValue(inode);
+    s.incrementTime();
+  } else if (
+      t.getReturnValue() >= 0 && (flags & O_TRUNC) == O_TRUNC &&
+      (flags & O_PATH) != O_PATH &&
+      isRegularFileFd(s.traceePid, t.getReturnValue())) {
+    // An existing file opened with O_TRUNC gets new contents as much as a
+    // created one does. Give it a new modification time too, or a rebuilt
+    // output looks as old as its sources, and whether it was there before
+    // the run would show in what the guest sees. Same file, so it keeps its
+    // virtual inode. The kernel truncates regular files only - a shell's
+    // >/dev/null or a FIFO is left alone - and ignores O_TRUNC with O_PATH.
+    gs.log.writeToLog(Importance::info, "An existing file was truncated\n");
+    auto inode = readInodeFor(gs.log, s.traceePid, t.getReturnValue());
+    gs.mtimeMap[inode] = s.getLogicalTime();
     s.incrementTime();
   }
   s.fileExisted = false;
