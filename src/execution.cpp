@@ -1364,6 +1364,9 @@ bool execution::callPreHook(
   case SYS_execve:
     return execveSystemCall::handleDetPre(gs, s, t, sched);
 
+#ifdef SYS_faccessat2
+  case SYS_faccessat2:
+#endif
   case SYS_faccessat:
     return faccessatSystemCall::handleDetPre(gs, s, t, sched);
 
@@ -1783,6 +1786,9 @@ void execution::callPostHook(
   case SYS_epoll_pwait:
     return epoll_pwaitSystemCall::handleDetPost(gs, s, t, sched);
 
+#ifdef SYS_faccessat2
+  case SYS_faccessat2:
+#endif
   case SYS_faccessat:
     return faccessatSystemCall::handleDetPost(gs, s, t, sched);
 
