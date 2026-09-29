@@ -29,6 +29,16 @@ template <typename StatfsT>
 void zeroOutStatfs(StatfsT& stats);
 
 /**
+ * The modification time the guest sees for a file: when the guest created it,
+ * on the logical clock, or a second before the epoch for a file that existed
+ * before the run, so that it is older than every file the guest makes even to
+ * a tool that compares whole seconds.
+ * @param realinode the file's real device and inode
+ */
+logical_clock::time_point virtualMtime(
+    globalState& gs, const DevIno& realinode);
+
+/**
  * All stat functions can be handled the same, newfstatat is special. Pass the
  * name of the function to syscallName if it's "newfstatat" it's treated
  * specially.

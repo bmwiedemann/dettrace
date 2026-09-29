@@ -136,6 +136,23 @@ void zeroOutStatfs(StatfsT& stats) {
 template void zeroOutStatfs(struct statfs& stats);
 template void zeroOutStatfs(struct statfs64& stats);
 // =======================================================================================
+logical_clock::time_point virtualMtime(
+    globalState& gs, const DevIno& realinode) {
+  // A file the guest created carries the logical time it was created at.
+  // That clock starts at the epoch and advances in microseconds, so a file
+  // written early in a run would otherwise share its second with the
+  // sources it was made from, and a tool comparing whole seconds - clisp
+  // deciding whether a .fas is newer than its .lsp, for one - would take it
+  // for stale and build it again. So every file from before the run is a
+  // second older than the epoch; moving the created ones forward instead
+  // would put them in the guest's future, and make warns about clock skew.
+  auto created = gs.mtimeMap.find(realinode);
+  if (created == gs.mtimeMap.end()) {
+    return gs.epoch - std::chrono::seconds(1);
+  }
+  return created->second;
+}
+// =======================================================================================
 void handleStatFamily(
     globalState& gs, state& s, ptracer& t, string syscallName) {
   // The tracee's buffer is the kernel's stat structure: struct stat on
@@ -172,7 +189,7 @@ void handleStatFamily(
         Importance::extra, "(device,realinode) = (%lu,%lu)\n",
         (unsigned long)realinode.dev, (unsigned long)realinode.ino);
     // Use inode to check if we created this file during our run.
-    const auto mtime = get_with_default(gs.mtimeMap, realinode, gs.epoch);
+    const auto mtime = virtualMtime(gs, realinode);
 
     gs.log.writeToLog(
         Importance::extra, " realinode in mtimeMap %d, resulting mtime: %d\n",

@@ -2801,7 +2801,7 @@ void statxSystemCall::handleDetPost(
 
   DevIno realinode = {
       makedev(theirs.stx_dev_major, theirs.stx_dev_minor), theirs.stx_ino};
-  const auto mtime = get_with_default(gs.mtimeMap, realinode, gs.epoch);
+  const auto mtime = virtualMtime(gs, realinode);
   const struct timespec epochTs = logical_clock::to_timespec(gs.epoch);
   const struct timespec mtimeTs = logical_clock::to_timespec(mtime);
   mine.stx_atime.tv_sec = epochTs.tv_sec;
