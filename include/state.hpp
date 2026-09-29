@@ -322,6 +322,33 @@ public:
   void incrementTime() { clock += clock_step; }
 
   /**
+   * Let the time pass that a timed wait of this process gave up waiting:
+   * we return every such wait at once, and the time it asked for has to go
+   * by on our clock too, or a program that waits until the clock reaches a
+   * deadline asks again and again for nearly all of it.
+   */
+  void advanceTime(logical_clock::duration waited) {
+    if (waited > logical_clock::duration::zero()) {
+      clock += waited;
+    }
+  }
+
+  /**
+   * Same, for a wait until an absolute time.
+   */
+  void advanceTimeTo(logical_clock::time_point deadline) {
+    if (deadline > clock) {
+      clock = deadline;
+    }
+  }
+
+  /**
+   * The timeout the select or pselect6 in progress was given, which we
+   * replace with zero in the tracee's memory.
+   */
+  logical_clock::duration waitTimeout = logical_clock::duration::zero();
+
+  /**
    * Function to get value of internal logical clock.
    */
   logical_clock::time_point getLogicalTime() const { return clock; }

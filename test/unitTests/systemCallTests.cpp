@@ -26,6 +26,9 @@
 #include <signal.h>
 #include <time.h>
 #include <sys/sendfile.h>
+#include <poll.h>
+#include <sys/epoll.h>
+#include <sys/select.h>
 #include <sys/mman.h>
 #include <sys/sysinfo.h>
 #include <sys/resource.h>
@@ -504,4 +507,58 @@ TEST_CASE("splice into a full pipe waits", "splice"){
 
 TEST_CASE("sendfile into a full pipe waits", "sendfile"){
   fillPipeFromFile(false);
+}
+
+static double monotonicSeconds() {
+  struct timespec now;
+  clock_gettime(CLOCK_MONOTONIC, &now);
+  return now.tv_sec + now.tv_nsec / 1e9;
+}
+
+// We return every timed wait at once; the time it waited for must pass on
+// our clock, or a program that waits until a deadline never gets there.
+TEST_CASE("a timed wait lets its time pass", "timeouts"){
+  int p[2];
+  REQUIRE(pipe(p) == 0); // nothing will ever be written
+
+  double start = monotonicSeconds();
+  struct timespec second = {1, 0};
+  REQUIRE(nanosleep(&second, nullptr) == 0);
+  REQUIRE(monotonicSeconds() - start >= 1.0);
+
+  start = monotonicSeconds();
+  struct pollfd pfd = {p[0], POLLIN, 0};
+  REQUIRE(poll(&pfd, 1, 300) == 0);
+  REQUIRE(monotonicSeconds() - start >= 0.3);
+
+  start = monotonicSeconds();
+  REQUIRE(poll(nullptr, 0, 200) == 0);
+  REQUIRE(monotonicSeconds() - start >= 0.2);
+
+  start = monotonicSeconds();
+  fd_set readable;
+  FD_ZERO(&readable);
+  FD_SET(p[0], &readable);
+  struct timeval tv = {0, 250000};
+  REQUIRE(select(p[0] + 1, &readable, nullptr, nullptr, &tv) == 0);
+  REQUIRE(monotonicSeconds() - start >= 0.25);
+
+  int ep = epoll_create1(0);
+  REQUIRE(ep >= 0);
+  struct epoll_event ev = {};
+  ev.events = EPOLLIN;
+  REQUIRE(epoll_ctl(ep, EPOLL_CTL_ADD, p[0], &ev) == 0);
+  start = monotonicSeconds();
+  REQUIRE(epoll_wait(ep, &ev, 1, 400) == 0);
+  REQUIRE(monotonicSeconds() - start >= 0.4);
+
+  struct timespec deadline;
+  clock_gettime(CLOCK_MONOTONIC, &deadline);
+  deadline.tv_sec += 5;
+  REQUIRE(clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &deadline, nullptr) == 0);
+  REQUIRE(monotonicSeconds() >= deadline.tv_sec + deadline.tv_nsec / 1e9);
+
+  close(ep);
+  close(p[0]);
+  close(p[1]);
 }

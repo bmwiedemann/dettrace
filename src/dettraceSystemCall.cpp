@@ -151,6 +151,17 @@ static void writeTraceeItimerspec(
   writeTraceeTimespec(t, addr + traceeTimespecSize(t), its.it_value, pid);
 }
 
+// How long a timeout given as a timespec is, for State::advanceTime.
+static logical_clock::duration timeoutDuration(const struct timespec& ts) {
+  return std::chrono::duration_cast<logical_clock::duration>(
+      std::chrono::seconds(ts.tv_sec) + std::chrono::nanoseconds(ts.tv_nsec));
+}
+
+static logical_clock::duration timeoutMilliseconds(long ms) {
+  return std::chrono::duration_cast<logical_clock::duration>(
+      std::chrono::milliseconds(ms));
+}
+
 // =======================================================================================
 bool accessSystemCall::handleDetPre(
     globalState& gs, state& s, ptracer& t, scheduler& sched) {
@@ -555,6 +566,10 @@ void epoll_waitSystemCall::handleDetPost(
     }
   } else {
     gs.log.writeToLog(Importance::info, "Non-blocking epoll found\n");
+    // Nothing happened within the timeout: it has passed.
+    if ((int)t.getReturnValue() == 0 && (int)s.originalArg4 > 0) {
+      s.advanceTime(timeoutMilliseconds((int)s.originalArg4));
+    }
     sched.preemptAndScheduleNext();
   }
   return;
@@ -580,6 +595,10 @@ void epoll_pwaitSystemCall::handleDetPost(
     }
   } else {
     gs.log.writeToLog(Importance::info, "Non-blocking epoll found\n");
+    // Nothing happened within the timeout: it has passed.
+    if ((int)t.getReturnValue() == 0 && (int)s.originalArg4 > 0) {
+      s.advanceTime(timeoutMilliseconds((int)s.originalArg4));
+    }
     sched.preemptAndScheduleNext();
   }
   return;
@@ -1562,6 +1581,9 @@ bool nanosleepSystemCall::handleDetPre(
   // Write 0 seconds to time. Required to skip waiting at all.
   struct timespec* req = (struct timespec*)t.arg1();
   if (req != nullptr) {
+    // The sleep is over at once; its time passes on our clock.
+    s.advanceTime(
+        timeoutDuration(readTraceeTimespec(t, (uint64_t)req, s.traceePid)));
     struct timespec* myReq = (timespec*)s.mmapMemory.getAddr().ptr;
     struct timespec localReq = {0};
 
@@ -1580,6 +1602,14 @@ bool clock_nanosleepSystemCall::handleDetPre(
     globalState& gs, state& s, ptracer& t, scheduler& sched) {
   struct timespec* req = (struct timespec*)t.arg3();
   if (req != nullptr) {
+    // The sleep is over at once; its time passes on our clock, which every
+    // clock id reads.
+    struct timespec until = readTraceeTimespec(t, (uint64_t)req, s.traceePid);
+    if ((t.arg2() & TIMER_ABSTIME) != 0) {
+      s.advanceTimeTo(logical_clock::from_timespec(until));
+    } else {
+      s.advanceTime(timeoutDuration(until));
+    }
     struct timespec* myReq = (timespec*)s.mmapMemory.getAddr().ptr;
     struct timespec localReq = {0};
 
@@ -1992,6 +2022,8 @@ bool pselect6SystemCall::handleDetPre(
     writeTraceeTimespec(t, (uint64_t)newAddr, ourTimeout, s.traceePid);
     t.writeArg5((uint64_t)newAddr);
   } else {
+    s.waitTimeout =
+        timeoutDuration(readTraceeTimespec(t, (uint64_t)timeoutPtr, s.traceePid));
     writeTraceeTimespec(t, (uint64_t)timeoutPtr, ourTimeout, s.traceePid);
     s.userDefinedTimeout = true;
   }
@@ -2004,6 +2036,8 @@ void pselect6SystemCall::handleDetPost(
   if (s.userDefinedTimeout) {
     s.userDefinedTimeout = false;
     if (t.getReturnValue() == 0) {
+      // Nothing happened within the timeout: it has passed.
+      s.advanceTime(s.waitTimeout);
       // See selectSystemCall::handleDetPost.
       sched.preemptAndScheduleNext();
     }
@@ -2063,6 +2097,10 @@ void pollSystemCall::handleDetPost(
   // final too and must not leave the retry state behind.
   if (retval != 0 || rptr.ptr == NULL || nfds == 0 || timeout == 0 ||
       s.poll_retry_count >= s.poll_retry_maximum) {
+    // Nothing happened within the timeout: it has passed.
+    if (retval == 0 && timeout > 0) {
+      s.advanceTime(timeoutMilliseconds(timeout));
+    }
     s.originalArg3 = 0;
     s.poll_retry_count = 0;
     s.poll_retry_maximum = LONG_MAX;
@@ -2093,6 +2131,7 @@ bool ppollSystemCall::handleDetPre(
       struct timespec ts =
           readTraceeTimespec(t, (uint64_t)timeoutPtr, s.traceePid);
       s.poll_retry_maximum = ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+      s.waitTimeout = timeoutDuration(ts);
     }
   }
   s.originalArg3 = (uint64_t)timeoutPtr;
@@ -2115,6 +2154,11 @@ void ppollSystemCall::handleDetPost(
 
   if (retval != 0 || rptr.ptr == NULL || nfds == 0 ||
       s.poll_retry_count >= s.poll_retry_maximum) {
+    // Nothing happened within the timeout: it has passed.
+    if (retval == 0 && s.originalArg3 != 0) {
+      s.advanceTime(s.waitTimeout);
+    }
+    s.waitTimeout = logical_clock::duration::zero();
     s.originalArg3 = 0;
     s.poll_retry_count = 0;
     s.poll_retry_maximum = LONG_MAX;
@@ -2740,9 +2784,10 @@ bool selectSystemCall::handleDetPre(
     t.writeArg5((uint64_t)newAddr);
   } else {
     // Already exists in memory.
-    // jld: useless read from tracee memory
-    // timeval timeout = t.readFromTracee(traceePtr<timeval>(timeoutPtr),
-    // t.getPid());
+    timeval timeout =
+        t.readFromTracee(traceePtr<timeval>(timeoutPtr), t.getPid());
+    s.waitTimeout = std::chrono::seconds(timeout.tv_sec) +
+                    std::chrono::microseconds(timeout.tv_usec);
     t.writeToTracee(traceePtr<timeval>(timeoutPtr), ourTimeout, s.traceePid);
     s.userDefinedTimeout = true;
   }
@@ -2755,6 +2800,8 @@ void selectSystemCall::handleDetPost(
   if (s.userDefinedTimeout) {
     s.userDefinedTimeout = false;
     if (t.getReturnValue() == 0) {
+      // Nothing happened within the timeout: it has passed.
+      s.advanceTime(s.waitTimeout);
       // Mark this is blocked because we don't want it to keep being picked to
       // run off the runnableHeap. It will eventually get to run when the heaps
       // switch.
