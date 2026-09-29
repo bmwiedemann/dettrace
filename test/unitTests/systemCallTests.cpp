@@ -393,3 +393,47 @@ TEST_CASE("a new signal handler replaces the old one", "signals"){
   REQUIRE(alarms == 1);
   REQUIRE(signal(SIGALRM, SIG_DFL) != SIG_ERR);
 }
+
+TEST_CASE("disarming a timer sends no signal", "timers"){
+  // With the default disposition a stray SIGALRM would end the test run.
+  REQUIRE(signal(SIGALRM, SIG_DFL) != SIG_ERR);
+  REQUIRE(alarm(0) == 0);
+  struct itimerval zero = {};
+  REQUIRE(setitimer(ITIMER_REAL, &zero, nullptr) == 0);
+  REQUIRE(ualarm(0, 0) == 0);
+
+  REQUIRE(signal(SIGALRM, countAlarm) != SIG_ERR);
+  alarms = 0;
+  REQUIRE(alarm(0) == 0);
+  REQUIRE(setitimer(ITIMER_REAL, &zero, nullptr) == 0);
+  REQUIRE(alarms == 0);
+
+  timer_t timer;
+  struct sigevent sev = {};
+  sev.sigev_notify = SIGEV_SIGNAL;
+  sev.sigev_signo = SIGALRM;
+  REQUIRE(timer_create(CLOCK_REALTIME, &sev, &timer) == 0);
+  struct itimerspec zerospec = {};
+  struct itimerspec old;
+  memset(&old, 0x55, sizeof(old));
+  REQUIRE(timer_settime(timer, 0, &zerospec, &old) == 0);
+  REQUIRE(alarms == 0);
+  // Nothing is ever pending, so the previous setting reads as expired.
+  REQUIRE(old.it_value.tv_sec == 0);
+  REQUIRE(old.it_value.tv_nsec == 0);
+  REQUIRE(old.it_interval.tv_sec == 0);
+  // Linux refuses a NULL new_value, and a bad pointer is the tracee's
+  // EFAULT, not the end of the run.
+  errno = 0;
+  REQUIRE(syscall(SYS_timer_settime, timer, 0, nullptr, nullptr) == -1);
+  REQUIRE(errno == EINVAL);
+  errno = 0;
+  REQUIRE(syscall(SYS_timer_settime, timer, 0, (void*)8, nullptr) == -1);
+  REQUIRE(errno == EFAULT);
+  errno = 0;
+  REQUIRE(setitimer(ITIMER_REAL, (const struct itimerval*)8, nullptr) == -1);
+  REQUIRE(errno == EFAULT);
+  REQUIRE(alarms == 0);
+  REQUIRE(timer_delete(timer) == 0);
+  REQUIRE(signal(SIGALRM, SIG_DFL) != SIG_ERR);
+}

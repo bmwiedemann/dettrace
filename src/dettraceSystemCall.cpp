@@ -220,6 +220,12 @@ bool alarmSystemCall::handleDetPre(
   gs.log.writeToLog(
       Importance::info, "alarm pre-hook, requesting alarm in %u second(s)\n",
       t.arg1());
+  // alarm(0) cancels a pending alarm instead of asking for one. We deliver
+  // every alarm the moment it is set, so none is ever pending: let the call
+  // through, and the kernel says so by returning 0.
+  if (t.arg1() == 0) {
+    return false;
+  }
   // run post-hook if necessary
   return sendTraceeSignalNow(SIGALRM, gs, s, t, sched);
 }
@@ -3217,7 +3223,47 @@ bool timer_settimeSystemCall::handleDetPre(
   }
 
   timerInfo tinfo = s.timerCreateTimers.get()->at(timerid);
-  if (!tinfo.sendSignal) {
+
+  // The kernel knows nothing of the timers timer_create made here, so the
+  // call never reaches it: answer what it would. new_value must be there -
+  // Linux does not take NULL for a disarm - and readable.
+  uint64_t newValueAddr = (uint64_t)t.arg3();
+  if (newValueAddr == 0) {
+    failSystemCall(gs, s, t, EINVAL);
+    return false;
+  }
+  // it_value follows it_interval in struct itimerspec, in whichever timespec
+  // layout this system call takes.
+  const size_t timespecSize = traceeTimespecSize(t);
+  char probe[sizeof(struct __kernel_timespec)];
+  if (readVmTraceeRaw(
+          traceePtr<char>((char*)(newValueAddr + timespecSize)), probe,
+          timespecSize, t.getPid()) != (ssize_t)timespecSize) {
+    failSystemCall(gs, s, t, EFAULT);
+    return false;
+  }
+  struct timespec value =
+      readTraceeTimespec(t, newValueAddr + timespecSize, t.getPid());
+  // A zero it_value disarms the timer: deliver no signal for that, like
+  // setitimer.
+  bool disarm = value.tv_sec == 0 && value.tv_nsec == 0;
+
+  // We deliver every timer the moment it is armed, so none is ever pending:
+  // report the previous setting as expired, as timer_gettime does. Zero is
+  // the same bytes in either timespec layout.
+  uint64_t oldValueAddr = (uint64_t)t.arg4();
+  if (oldValueAddr != 0) {
+    char zero[2 * sizeof(struct __kernel_timespec)] = {};
+    struct iovec local = {zero, 2 * timespecSize};
+    struct iovec remote = {(void*)oldValueAddr, 2 * timespecSize};
+    if (process_vm_writev(t.getPid(), &local, 1, &remote, 1, 0) !=
+        (ssize_t)(2 * timespecSize)) {
+      failSystemCall(gs, s, t, EFAULT);
+      return false;
+    }
+  }
+
+  if (disarm || !tinfo.sendSignal) {
     replaceSystemCallWithNoop(gs, s, t);
     return true; // run getpid post-hook
   } else {
@@ -3260,6 +3306,27 @@ void getitimerSystemCall::handleDetPost(
 bool setitimerSystemCall::handleDetPre(
     globalState& gs, state& s, ptracer& t, scheduler& sched) {
   gs.log.writeToLog(Importance::info, "setitimer pre-hook\n");
+
+  // A zero it_value disarms the timer, and a NULL new_value is taken as one
+  // by Linux. We deliver every timer the moment it is armed, so none is ever
+  // pending: let the call through instead of sending a signal nobody asked
+  // for. clisp cancels its timer this way whenever it signals an error, from
+  // the SIGALRM handler too, so an extra signal recursed until the stack ran
+  // out.
+  struct itimerval* newValuePtr = (struct itimerval*)t.arg2();
+  if (newValuePtr == nullptr) {
+    return false;
+  }
+  struct itimerval newValue;
+  // An unreadable new_value is the kernel's to refuse with EFAULT.
+  if (readVmTraceeRaw(
+          traceePtr<struct itimerval>(newValuePtr), &newValue,
+          sizeof(newValue), t.getPid()) != (ssize_t)sizeof(newValue)) {
+    return false;
+  }
+  if (newValue.it_value.tv_sec == 0 && newValue.it_value.tv_usec == 0) {
+    return false;
+  }
 
   int whichTimer = t.arg1();
   switch (whichTimer) {
