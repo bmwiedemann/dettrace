@@ -484,14 +484,40 @@ static inline void regsSetIp(struct user_regs_struct& r, unsigned long val) {
 #endif
 }
 
+#if defined(__powerpc__)
+/**
+ * Whether the system call at this stop was made with scv rather than sc.
+ *
+ * powerpc has two system call instructions with two error conventions. sc
+ * returns a positive errno and sets the cr0 summary-overflow bit; scv (ISA
+ * 3.0, which glibc uses wherever the kernel offers it, so on every POWER9
+ * or later) returns a negative errno in r3 like every other architecture
+ * and leaves cr0 alone, and glibc's scv path tests the sign of r3, never
+ * SO. The kernel records which one trapped in pt_regs.trap -- 0xc00 and
+ * 0x3000, the low bits being flags -- which is how its own trap_is_scv()
+ * tells them apart.
+ *
+ * Getting this wrong is not a crash but a success: an error written
+ * sc-style to an scv caller is a positive r3, which glibc hands to the
+ * program as a return value of +errno.
+ */
+static inline bool regsSyscallIsScv(const struct user_regs_struct& r) {
+  return (r.trap & ~0x1fUL) == 0x3000;
+}
+#endif
+
 /**
  * Return value of the current/last system call in the usual Linux
  * convention (negative errno on error), and its setter. On most
- * architectures this is simply the REG_RETVAL register; powerpc uses
- * the cr0 summary-overflow bit plus a positive errno instead.
+ * architectures this is simply the REG_RETVAL register; powerpc's sc uses
+ * the cr0 summary-overflow bit plus a positive errno instead, while its
+ * scv does not, see regsSyscallIsScv.
  */
 static inline long regsReturnValue(const struct user_regs_struct& r) {
 #if defined(__powerpc__)
+  if (regsSyscallIsScv(r)) {
+    return (long)r.gpr[3];
+  }
   return (r.ccr & PPC_CR0_SO) ? -(long)r.gpr[3] : (long)r.gpr[3];
 #else
   return (long)REG_RETVAL(r);
@@ -509,7 +535,10 @@ static inline bool syscallFailed(long ret) {
 
 static inline void regsSetReturnValue(struct user_regs_struct& r, long val) {
 #if defined(__powerpc__)
-  if (val < 0) {
+  if (regsSyscallIsScv(r)) {
+    // The kernel does not touch cr0 on the scv path either.
+    r.gpr[3] = val;
+  } else if (val < 0) {
     r.gpr[3] = -val;
     r.ccr |= PPC_CR0_SO;
   } else {
