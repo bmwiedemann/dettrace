@@ -851,7 +851,13 @@ programArgs parseProgramArguments(int argc, char* argv[]) {
       throw cxxopts::argument_incorrect_type("base-env=" + base_env);
     }
 
-    if (args.clone_ns_flags & CLONE_NEWUSER || args.alreadyInChroot) {
+    // Inside a chroot the host's home directory need not exist, so point
+    // HOME at root's, as the guest is root there. Outside of one, keep what
+    // --base-env=host inherited: the guest is root only in its own user
+    // namespace, where the real /root is off limits to it (clisp dies
+    // probing /root/.clisprc), while the host's home belongs to the user it
+    // maps to.
+    if (args.alreadyInChroot) {
       if (args.envs.find("HOME") != args.envs.end()) {
         args.envs["HOME"] = "/root";
       }
