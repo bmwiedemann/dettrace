@@ -837,6 +837,133 @@ void execution::disableVdso(pid_t pid) {
   }
 }
 
+#if defined(__x86_64__)
+/** Whether the tracee has a handler for sig, i.e. whether delivering it
+ * builds a signal frame at all (SigCgt in /proc/<pid>/status). */
+static bool signalIsCaught(pid_t pid, int sig) {
+  char path[64];
+  snprintf(path, sizeof(path), "/proc/%d/status", pid);
+  FILE* f = fopen(path, "re");
+  if (f == nullptr) {
+    return false;
+  }
+  char line[256];
+  unsigned long long caught = 0;
+  bool found = false;
+  while (!found && fgets(line, sizeof(line), f) != nullptr) {
+    found = sscanf(line, "SigCgt: %llx", &caught) == 1;
+  }
+  fclose(f);
+  return found && sig >= 1 && sig <= 64 && (caught >> (sig - 1)) & 1;
+}
+
+/** The lowest address of the stack that addr is on, or 0 when addr is not
+ * on a stack we can tell from the mappings: the main thread's [stack], or a
+ * writable mapping with a guard (a mapping that cannot be written) right
+ * below it, as glibc (PROT_NONE) and SBCL (a read-only page) give their thread
+ * stacks. A stack that a program carved
+ * out of other memory (Go goroutines, coroutines on malloc'd memory) has live
+ * data below it, and we must not write there. */
+static uint64_t guardedStackBottom(pid_t pid, uint64_t addr) {
+  char path[64];
+  snprintf(path, sizeof(path), "/proc/%d/maps", pid);
+  FILE* f = fopen(path, "re");
+  if (f == nullptr) {
+    return 0;
+  }
+  char line[4096];
+  uint64_t bottom = 0;
+  uint64_t prevEnd = 0;
+  bool prevGuard = false;
+  while (fgets(line, sizeof(line), f) != nullptr) {
+    unsigned long start, end, inode;
+    char perms[5];
+    int nameAt = 0;
+    if (sscanf(line, "%lx-%lx %4s %*s %*s %lu %n", &start, &end, perms, &inode,
+               &nameAt) < 4) {
+      continue;
+    }
+    if (start <= addr && addr < end) {
+      const char* name = nameAt > 0 ? line + nameAt : "";
+      bool mainStack = strncmp(name, "[stack]", 7) == 0;
+      bool threadStack = perms[1] == 'w' && inode == 0 &&
+                         (name[0] == '\0' || name[0] == '\n') && prevGuard &&
+                         prevEnd == start;
+      if (mainStack || threadStack) {
+        bottom = start;
+      }
+      break;
+    }
+    prevEnd = end;
+    prevGuard = perms[1] != 'w';
+  }
+  fclose(f);
+  return bottom;
+}
+
+/**
+ * Zero the dead part of a tracee's stack before a signal is delivered to it.
+ *
+ * The kernel builds the signal frame just below the red zone, and its size
+ * and contents follow the CPU's XSAVE features (AVX-512 state alone is over
+ * 2 KiB), which CPUID masking cannot hide. So the handler runs at a
+ * CPU-dependent depth, over stack garbage that differs, and the frame it
+ * leaves behind is new garbage for whatever runs there next. A conservative
+ * garbage collector that scans the stack from such a handler (SBCL runs its
+ * GC from a SIGILL trap) then pins other objects on another CPU, and the
+ * heap it dumps comes out different. With the dead stack zeroed, only the
+ * frame itself still differs.
+ *
+ * Below the 128-byte red zone the kernel may write a frame at any moment, so
+ * nothing lives there - on a real stack, and as deep as a frame reaches. We
+ * zero up to 256 KiB, so only where that deeper part is dead too: when the
+ * frame goes on this stack at all (a handler runs, and not on the alternate
+ * stack), and only down to the bottom of a stack with a guard below it.
+ * Set DETTRACE_NO_STACK_SCRUB to skip this.
+ */
+static void scrubDeadStack(pid_t pid, int sig, const state& s) {
+  static const bool disabled = getenv("DETTRACE_NO_STACK_SCRUB") != nullptr;
+  if (disabled || s.signalsOnAltStack->count(sig) ||
+      !signalIsCaught(pid, sig)) {
+    return;
+  }
+  // Deep enough for the frame and a handler that calls into a language
+  // runtime; a deeper handler may still meet older garbage.
+  constexpr size_t pages = 64;
+  constexpr size_t pageSize = 4096;
+  static char zeros[pageSize];
+  struct user_regs_struct regs;
+  ptracer::readRegisters(pid, regs);
+  if (regs.rsp < 128 + pageSize) {
+    return;
+  }
+  uint64_t top = (regs.rsp - 128) & ~(uint64_t)7;
+  uint64_t bottom = guardedStackBottom(pid, top - 1);
+  if (bottom == 0) {
+    return;
+  }
+
+  // One iovec per page, downwards from the red zone; process_vm_writev stops
+  // at the first remote iovec it cannot write, leaving the part above it done.
+  struct iovec local[pages], remote[pages];
+  size_t n = 0;
+  while (n < pages && top > bottom) {
+    uint64_t low = (top - 1) & ~(uint64_t)(pageSize - 1);
+    if (low < bottom) {
+      low = bottom;
+    }
+    local[n] = {zeros, (size_t)(top - low)};
+    remote[n] = {(void*)low, (size_t)(top - low)};
+    top = low;
+    n++;
+  }
+  if (n > 0) {
+    // A short or failed write is fine, see above.
+    (void)process_vm_writev(pid, local, n, remote, n, 0);
+  }
+}
+#endif
+
 static unsigned long traceePreinitMmap(pid_t pid, ptracer& t) {
   struct user_regs_struct regs;
   unsigned long ret;
@@ -2173,6 +2300,13 @@ tuple<ptraceEvent, pid_t, int> execution::getNextEvent(
 
   // Reset signal field after for next event.
   states.at(pidToContinue).signalToDeliver = 0;
+
+#if defined(__x86_64__)
+  if (signalToDeliver != 0) {
+    scrubDeadStack(
+        pidToContinue, (int)signalToDeliver, states.at(pidToContinue));
+  }
+#endif
 
   // Usually we use PTRACE_CONT below because we are letting seccomp + bpf
   // handle the events. So unlike standard ptrace, we do not rely on system call

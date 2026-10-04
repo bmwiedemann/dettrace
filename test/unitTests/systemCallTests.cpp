@@ -28,6 +28,7 @@
 #include <sys/sendfile.h>
 #include <poll.h>
 #include <sys/epoll.h>
+#include <ucontext.h>
 #include <sys/select.h>
 #include <sys/mman.h>
 #include <sys/sysinfo.h>
@@ -562,3 +563,101 @@ TEST_CASE("a timed wait lets its time pass", "timeouts"){
   close(p[0]);
   close(p[1]);
 }
+
+#if defined(__x86_64__)
+// Fill the stack below the caller's frame, then return.
+static __attribute__((noinline)) void dirtyStack() {
+  volatile char buf[32768];
+  for (size_t i = 0; i < sizeof(buf); i++) {
+    buf[i] = (char)0xa5;
+  }
+}
+
+// Count leftovers of dirtyStack() in a band that lies below the caller's
+// frame and below where a signal frame and its handler go.
+static __attribute__((noinline)) size_t dirtyBytesBelow() {
+  volatile char* frame = (volatile char*)__builtin_frame_address(0);
+  size_t n = 0;
+  for (size_t i = 16384; i < 24576; i++) {
+    n += frame[-(ptrdiff_t)i] == (char)0xa5;
+  }
+  return n;
+}
+
+static void ignoreSignal(int) {}
+
+// The signal frame's size follows the CPU's XSAVE state, so the garbage it
+// leaves on the stack, and the depth a handler runs at, depend on the CPU;
+// we zero the dead stack before a signal is delivered.
+TEST_CASE("a signal leaves no old garbage below the stack", "signals"){
+  REQUIRE(signal(SIGUSR1, ignoreSignal) != SIG_ERR);
+  dirtyStack();
+  size_t before = dirtyBytesBelow();
+  dirtyStack();
+  raise(SIGUSR1);
+  size_t after = dirtyBytesBelow();
+  REQUIRE(signal(SIGUSR1, SIG_DFL) != SIG_ERR);
+  REQUIRE(before > 0);
+  REQUIRE(after == 0);
+}
+
+// Where no frame goes on the stack, the memory below it may be in use, so it
+// must stay as it is: for an ignored signal, and for a handler that runs on
+// the alternate signal stack.
+TEST_CASE("a signal without a frame on the stack leaves it alone", "signals"){
+  REQUIRE(signal(SIGUSR2, SIG_IGN) != SIG_ERR);
+  dirtyStack();
+  raise(SIGUSR2);
+  size_t ignored = dirtyBytesBelow();
+
+  stack_t alt = {};
+  alt.ss_size = 65536;
+  alt.ss_sp = malloc(alt.ss_size);
+  REQUIRE(alt.ss_sp != nullptr);
+  REQUIRE(sigaltstack(&alt, nullptr) == 0);
+  struct sigaction sa = {};
+  sa.sa_handler = ignoreSignal;
+  sa.sa_flags = SA_ONSTACK;
+  REQUIRE(sigaction(SIGUSR1, &sa, nullptr) == 0);
+  dirtyStack();
+  raise(SIGUSR1);
+  size_t onAltStack = dirtyBytesBelow();
+
+  REQUIRE(signal(SIGUSR1, SIG_DFL) != SIG_ERR);
+  REQUIRE(signal(SIGUSR2, SIG_DFL) != SIG_ERR);
+  stack_t off = {};
+  off.ss_flags = SS_DISABLE;
+  REQUIRE(sigaltstack(&off, nullptr) == 0);
+  free(alt.ss_sp);
+  REQUIRE(ignored == 8192);
+  REQUIRE(onAltStack == 8192);
+}
+
+// A stack that a program carves out of its heap, like a coroutine's, has
+// live data right below it.
+static char* carvedMemory;
+static constexpr size_t carvedBelow = 32768;
+static void raiseOnCarvedStack() { raise(SIGUSR1); }
+
+TEST_CASE("a signal on a stack in the heap leaves the heap alone", "signals"){
+  REQUIRE(signal(SIGUSR1, ignoreSignal) != SIG_ERR);
+  const size_t stackSize = 65536;
+  carvedMemory = (char*)malloc(carvedBelow + stackSize);
+  REQUIRE(carvedMemory != nullptr);
+  memset(carvedMemory, 0xa5, carvedBelow);
+  ucontext_t main, coroutine;
+  REQUIRE(getcontext(&coroutine) == 0);
+  coroutine.uc_stack.ss_sp = carvedMemory + carvedBelow;
+  coroutine.uc_stack.ss_size = stackSize;
+  coroutine.uc_link = &main;
+  makecontext(&coroutine, raiseOnCarvedStack, 0);
+  REQUIRE(swapcontext(&main, &coroutine) == 0);
+  size_t intact = 0;
+  for (size_t i = 0; i < carvedBelow; i++) {
+    intact += carvedMemory[i] == (char)0xa5;
+  }
+  free(carvedMemory);
+  REQUIRE(signal(SIGUSR1, SIG_DFL) != SIG_ERR);
+  REQUIRE(intact == carvedBelow);
+}
+#endif

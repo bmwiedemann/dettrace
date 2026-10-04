@@ -243,10 +243,17 @@ public:
       signal/sigaction. The currentSignalHandlers map is updated iff the syscall
       completes successfully. */
   int requestedSignalToHandle = -1;
+  /** Whether the handler requested via sigaction runs on the alternate
+      signal stack (SA_ONSTACK). */
+  bool requestedSignalOnAltStack = false;
 
   /** Track, for each signal, what kind of handler this tracee currently has
    * registered. */
   shared_ptr<unordered_map<int, enum sighandler_type>> currentSignalHandlers;
+
+  /** Signals whose handler was installed with SA_ONSTACK. Shared like
+   * currentSignalHandlers. */
+  shared_ptr<unordered_set<int>> signalsOnAltStack;
 
   /** track timers created via timer_create */
   shared_ptr<unordered_map<timerID_t, timerInfo>> timerCreateTimers;

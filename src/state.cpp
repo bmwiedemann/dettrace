@@ -16,6 +16,7 @@ state::state(
       debugLevel(debugLevel) {
   currentSignalHandlers =
       std::make_shared<unordered_map<int, enum sighandler_type>>();
+  signalsOnAltStack = std::make_shared<unordered_set<int>>();
   timerCreateTimers = std::make_shared<unordered_map<timerID_t, timerInfo>>();
   remote_sockfds = std::make_shared<unordered_set<int>>();
   timerfds = std::make_shared<unordered_map<int, struct itimerspec>>();
@@ -41,6 +42,8 @@ state state::forked(pid_t childPid) const {
   childState.currentSignalHandlers =
       make_shared<unordered_map<int, enum sighandler_type>>(
           *(this->currentSignalHandlers));
+  childState.signalsOnAltStack =
+      make_shared<unordered_set<int>>(*(this->signalsOnAltStack));
   childState.dirEntries = this->dirEntries;
   childState.dirEntries64 = this->dirEntries64;
 
@@ -70,6 +73,7 @@ state state::forked(pid_t childPid) const {
   childState.regSaver = this->regSaver;
   childState.requestedSignalHandler = this->requestedSignalHandler;
   childState.requestedSignalToHandle = this->requestedSignalToHandle;
+  childState.requestedSignalOnAltStack = this->requestedSignalOnAltStack;
   childState.signalInjected = false;
   childState.timerCreateTimers =
       make_shared<unordered_map<timerID_t, timerInfo>>(
@@ -95,6 +99,7 @@ state state::cloned(pid_t childPid) const {
   state childState(childPid, this->debugLevel, this->clock, this->clock_step);
   childState.CPUIDTrapSet = this->CPUIDTrapSet;
   childState.currentSignalHandlers = this->currentSignalHandlers;
+  childState.signalsOnAltStack = this->signalsOnAltStack;
   childState.dirEntries = this->dirEntries;
   childState.dirEntries64 = this->dirEntries64;
 
@@ -124,6 +129,7 @@ state state::cloned(pid_t childPid) const {
   childState.regSaver = this->regSaver;
   childState.requestedSignalHandler = this->requestedSignalHandler;
   childState.requestedSignalToHandle = this->requestedSignalToHandle;
+  childState.requestedSignalOnAltStack = this->requestedSignalOnAltStack;
   childState.signalInjected = false;
   childState.timerCreateTimers = this->timerCreateTimers;
   childState.totalBytes = this->totalBytes;

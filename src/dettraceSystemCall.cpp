@@ -2511,6 +2511,7 @@ bool rt_sigactionSystemCall::handleDetPre(
       Importance::info,
       "sa_handler: " + to_string((uint64_t)sa.sa_handler__) + "\n");
 
+  s.requestedSignalOnAltStack = (sa.sa_flags & SA_ONSTACK) != 0;
   if (((unsigned long)SIG_IGN) == sa.sa_handler__) {
     s.requestedSignalHandler = SIGHANDLER_IGNORED;
   } else if (((unsigned long)SIG_DFL) == sa.sa_handler__) {
@@ -2540,6 +2541,11 @@ void rt_sigactionSystemCall::handleDetPost(
     // was installed before, which insert() would have kept
     (*s.currentSignalHandlers.get())[s.requestedSignalToHandle] =
         s.requestedSignalHandler;
+    if (s.requestedSignalOnAltStack) {
+      s.signalsOnAltStack->insert(s.requestedSignalToHandle);
+    } else {
+      s.signalsOnAltStack->erase(s.requestedSignalToHandle);
+    }
 
     gs.log.writeToLog(
         Importance::info,
