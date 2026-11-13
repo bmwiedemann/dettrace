@@ -10,8 +10,11 @@
 #include "util.hpp"
 #include "vdso.hpp"
 
+#include <fcntl.h>
 #include <seccomp.h>
 #include <sys/utsname.h>
+#include <unistd.h>
+#include <algorithm>
 #include <linux/sched.h>
 #include <stack>
 #include <tuple>
@@ -857,11 +860,47 @@ static bool signalIsCaught(pid_t pid, int sig) {
   return found && sig >= 1 && sig <= 64 && (caught >> (sig - 1)) & 1;
 }
 
+/** The end of the highest guard page that madvise(MADV_GUARD_INSTALL) put
+ * into [start, addr), or 0 if there is none. Such a guard does not split the
+ * mapping, so /proc/<pid>/maps cannot show it, but pagemap marks it. */
+static uint64_t madvisedGuardBelow(pid_t pid, uint64_t start, uint64_t addr) {
+  constexpr uint64_t pageSize = 4096;
+  constexpr uint64_t pmGuardRegion = 1ULL << 58;
+  char path[64];
+  snprintf(path, sizeof(path), "/proc/%d/pagemap", pid);
+  int fd = open(path, O_RDONLY | O_CLOEXEC);
+  if (fd < 0) {
+    return 0;
+  }
+  uint64_t guardEnd = 0;
+  uint64_t entries[512];
+  uint64_t page = addr / pageSize;
+  uint64_t first = start / pageSize;
+  while (guardEnd == 0 && page > first) {
+    uint64_t n = std::min<uint64_t>(page - first, 512);
+    ssize_t got = pread(fd, entries, n * sizeof(uint64_t),
+                        (page - n) * sizeof(uint64_t));
+    if (got != (ssize_t)(n * sizeof(uint64_t))) {
+      break;
+    }
+    for (uint64_t i = n; i > 0; i--) {
+      if (entries[i - 1] & pmGuardRegion) {
+        guardEnd = (page - n + i) * pageSize;
+        break;
+      }
+    }
+    page -= n;
+  }
+  close(fd);
+  return guardEnd;
+}
+
 /** The lowest address of the stack that addr is on, or 0 when addr is not
  * on a stack we can tell from the mappings: the main thread's [stack], or a
  * writable mapping with a guard (a mapping that cannot be written) right
  * below it, as glibc (PROT_NONE) and SBCL (a read-only page) give their thread
- * stacks. A stack that a program carved
+ * stacks, or a guard page that madvise put inside it (SBCL since 2.6.10).
+ * A stack that a program carved
  * out of other memory (Go goroutines, coroutines on malloc'd memory) has live
  * data below it, and we must not write there. */
 static uint64_t guardedStackBottom(pid_t pid, uint64_t addr) {
@@ -886,11 +925,12 @@ static uint64_t guardedStackBottom(pid_t pid, uint64_t addr) {
     if (start <= addr && addr < end) {
       const char* name = nameAt > 0 ? line + nameAt : "";
       bool mainStack = strncmp(name, "[stack]", 7) == 0;
-      bool threadStack = perms[1] == 'w' && inode == 0 &&
-                         (name[0] == '\0' || name[0] == '\n') && prevGuard &&
-                         prevEnd == start;
-      if (mainStack || threadStack) {
+      bool anonymous = perms[1] == 'w' && inode == 0 &&
+                       (name[0] == '\0' || name[0] == '\n');
+      if (mainStack || (anonymous && prevGuard && prevEnd == start)) {
         bottom = start;
+      } else if (anonymous) {
+        bottom = madvisedGuardBelow(pid, start, addr);
       }
       break;
     }

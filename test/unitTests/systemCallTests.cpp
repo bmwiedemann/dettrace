@@ -660,4 +660,45 @@ TEST_CASE("a signal on a stack in the heap leaves the heap alone", "signals"){
   REQUIRE(signal(SIGUSR1, SIG_DFL) != SIG_ERR);
   REQUIRE(intact == carvedBelow);
 }
+
+// SBCL (2.6.10+) guards its thread stacks with madvise(MADV_GUARD_INSTALL),
+// which leaves the stack and the memory below its guard in one mapping.
+#ifndef MADV_GUARD_INSTALL
+#define MADV_GUARD_INSTALL 102
+#endif
+static size_t dirtyOnGuardedStack;
+static void raiseOnGuardedStack() {
+  dirtyStack();
+  raise(SIGUSR1);
+  dirtyOnGuardedStack = dirtyBytesBelow();
+}
+
+TEST_CASE("a signal on a stack with a madvise guard scrubs down to it", "signals"){
+  const size_t page = 4096, below = 32768, stackSize = 131072;
+  char* area = (char*)mmap(nullptr, below + page + stackSize,
+                           PROT_READ | PROT_WRITE,
+                           MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  REQUIRE(area != MAP_FAILED);
+  if (madvise(area + below, page, MADV_GUARD_INSTALL) != 0) {
+    munmap(area, below + page + stackSize);
+    return; // kernel older than 6.13
+  }
+  memset(area, 0xa5, below);
+  REQUIRE(signal(SIGUSR1, ignoreSignal) != SIG_ERR);
+  ucontext_t main, coroutine;
+  REQUIRE(getcontext(&coroutine) == 0);
+  coroutine.uc_stack.ss_sp = area + below + page;
+  coroutine.uc_stack.ss_size = stackSize;
+  coroutine.uc_link = &main;
+  makecontext(&coroutine, raiseOnGuardedStack, 0);
+  REQUIRE(swapcontext(&main, &coroutine) == 0);
+  size_t intact = 0;
+  for (size_t i = 0; i < below; i++) {
+    intact += area[i] == (char)0xa5;
+  }
+  munmap(area, below + page + stackSize);
+  REQUIRE(signal(SIGUSR1, SIG_DFL) != SIG_ERR);
+  REQUIRE(dirtyOnGuardedStack == 0);
+  REQUIRE(intact == below);
+}
 #endif
